@@ -1,4 +1,13 @@
 #!/bin/sh
+#
+######################################################################
+#
+# docker-scp
+#
+# Like 'docker cp', but uses scp to put files into the docker
+# container.
+#
+######################################################################
 
 bindir=$(dirname $0)
 bindir=$(cd $bindir && pwd)
