@@ -1,0 +1,46 @@
+#!/usr/bin/python
+
+"""remote scp adapter for 'docker-machine-scp-root'
+
+Ha ha, 'docker ssh' doesn't do buffering properly for scp.
+"""
+
+import sys, os
+import subprocess
+import json
+
+args = list(sys.argv[1:])
+while args:
+    if args[0] == '--':
+        args.pop(0)
+        break
+    args.pop(0)
+
+machine = args.pop(0)
+cmd = ('docker-machine', 'inspect', machine,)
+data = json.loads(subprocess.check_output(cmd))
+sshPort = data['Driver']['SSHPort']
+storePath = data['StorePath']
+sshKey = os.path.join(storePath, 'id_rsa')
+
+remoteCmd = " ".join(args)
+remoteCmd = "IFS=; sudo -- /bin/sh -c \"%s\"" % remoteCmd
+
+# scrape this from 'docker-machine --debug scp'
+cmd = ('ssh',
+       '-oPasswordAuthentication=no',
+       '-oIdentitiesOnly=yes',
+       '-oStrictHostKeyChecking=no',
+       '-oUserKnownHostsFile=/dev/null',
+       '-oLogLevel=quiet',
+       '-oConnectionAttempts=3',
+       '-oConnectTimeout=10',
+       '-i', sshKey,
+       '-p', str(sshPort),
+       '-oUser=docker',
+       'localhost',
+       '--',
+       '/bin/sh', '-c', remoteCmd,)
+
+subprocess.check_call(cmd)
+sys.exit(0)

@@ -1,0 +1,13 @@
+#!/bin/sh
+#
+######################################################################
+#
+# docker-machine-scp-root
+#
+# Run docker-machine scp using the root account
+#
+######################################################################
+
+bindir=$(dirname $0)
+bindir=$(cd $bindir && pwd)
+exec /usr/bin/scp -S $bindir/docker-machine-scp-root-ssh "$@"
