@@ -1,0 +1,11 @@
+# build the switchlight build environment
+FROM switch_team_deb7_builder
+MAINTAINER Carl Roth <carl.roth@bigswitch.com>
+COPY apt.conf /etc/apt/apt.conf.d/98docker-host
+COPY acng.conf /etc/apt-cacher-ng/acng.conf
+COPY docker-init.sh /docker-init.sh
+ENTRYPOINT ["/docker-init.sh"]
+ENV TERM linux
+ENV USER @USER@
+ENV HOME @HOME@
+CMD bash

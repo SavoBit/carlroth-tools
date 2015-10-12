@@ -1,0 +1,13 @@
+# build the switchlight build environment
+FROM ubuntu:14.04
+MAINTAINER Carl Roth <carl.roth@bigswitch.com>
+COPY apt.conf /etc/apt/apt.conf.d/98docker-host
+COPY sudoers /etc/sudoers.d/sudoers
+RUN groupadd -o -g @GID@ @USER@
+RUN useradd -o -u @UID@ -g @GID@ -M -d @HOME@ -s /bin/bash @USER@
+COPY docker-init.sh /docker-init.sh
+ENTRYPOINT ["/docker-init.sh"]
+ENV TERM linux
+ENV USER @USER@
+ENV HOME @HOME@
+CMD bash

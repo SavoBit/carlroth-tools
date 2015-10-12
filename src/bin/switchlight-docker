@@ -1,0 +1,13 @@
+#!/bin/sh
+
+bindir=$(dirname $0)
+bindir=$(cd $bindir && pwd)
+
+set -e
+if docker inspect roth_switchlight 1>/dev/null 2>&1; then
+  :
+else
+  make -C $bindir/docker/switchlight create-images
+fi
+
+exec switchlight-shell

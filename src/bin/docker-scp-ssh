@@ -1,0 +1,24 @@
+#!/bin/bash
+
+set -e
+
+# dump all of non-scp args
+while test $# -gt 0; do
+  if test "$1" = "--"; then
+    shift
+    break
+  fi
+  shift
+done
+
+host=$1; shift
+cmd="$@"
+
+id=$(docker inspect "$host" 2>/dev/null | sed -n -e 's/.*\"Id\": \"\(.*\)\",.*/\1/p' || :)
+if test "$id"; then
+  echo "$0: host $host --> id $id" 1>&2
+else
+  echo "$0: *** cannot find docker id for $host" 1>&2
+  exit 1
+fi
+exec docker exec -i "$id" /bin/sh -c "$cmd"

@@ -1,0 +1,28 @@
+#!/bin/bash
+
+if grep -q docker /proc/self/cgroup; then
+  exec /usr/bin/make "$@"
+fi
+
+dir=$PWD
+DOCKER_CONTAINER_ID=
+while test -z "$DOCKER_CONTAINER_ID"; do
+  if test -e $dir/.dockerrc; then
+    . $dir/.dockerrc
+  fi
+  dir=${dir%/*}
+  test "$dir" || break
+done
+
+if test "$DOCKER_CONTAINER_ID"; then
+  if docker inspect "$DOCKER_CONTAINER_ID" 1>/dev/null 2>&1; then
+    echo "$0: using docker container $DOCKER_CONTAINER_ID"
+    cmd="IFS=; set -e; . ~/.bash_profile; cd $PWD; /usr/bin/make"$(printf " %q" "$@")
+    exec docker exec $DOCKER_CONTAINER_ID /bin/bash -c "$cmd"
+  else
+    echo "$0: *** invalid docker container $DOCKER_CONTAINER_ID" 1>&2
+    exit 1
+  fi
+else
+  exec /usr/bin/make "$@"
+fi

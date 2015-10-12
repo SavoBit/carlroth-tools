@@ -1,0 +1,13 @@
+#!/bin/sh
+
+bindir=$(dirname $0)
+bindir=$(cd $bindir && pwd)
+
+set -e
+if docker inspect roth_floodlight 1>/dev/null 2>&1; then
+  :
+else
+  make -C $bindir/docker/floodlight create-images
+fi
+
+exec floodlight-shell

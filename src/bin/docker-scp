@@ -1,0 +1,6 @@
+#!/bin/sh
+
+bindir=$(dirname $0)
+bindir=$(cd $bindir && pwd)
+exec /usr/bin/scp -S $bindir/docker-scp-ssh "$@"
+

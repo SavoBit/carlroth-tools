@@ -1,0 +1,40 @@
+#!/bin/sh
+
+if test "$DOCKER_CONTAINER"; then
+  exec /usr/bin/make "$@"
+fi
+
+workdir=$(mktemp -d /tmp/docker-XXXXXX)
+do_cleanup()
+{
+  cd /tmp
+  rm -fr $workdir
+}
+trap "do_cleanup" 0 1
+
+id=$(docker ps --no-trunc | grep roth_workspace | cut -d' ' -f1)
+
+/bin/cat > $workdir/host_sh <<-END
+	#!/bin/bash
+	cmd=\$(printf " %q" /bin/sh "\$@")
+	shtmp=\$(mktemp /tmp/docker-XXXXXX)
+	trap "rm -f \$shtmp" 0 1
+	echo "#!/bin/bash" >> \$shtmp
+	echo "set -e" >> \$shtmp
+	echo "export SWITCHLIGHT=\$SWITCHLIGHT" >> \$shtmp
+	echo "cd \$PWD" >> \$shtmp
+	echo "\$cmd" >> \$shtmp
+	echo "exit \$?" >> \$shtmp
+	cat \$shtmp \\
+	| docker exec -i $id /bin/sh -c "IFS=; set -e; cat > \$shtmp; chmod +x \$shtmp"
+	docker exec $id /bin/sh \$shtmp
+	sts=\$?
+	docker exec $id /bin/sh -c "rm \$shtmp"
+	exit \$?
+	END
+chmod +x $workdir/host_sh
+
+##set -x
+##nl $workdir/host_sh 1>&2
+/usr/bin/make SHELL=$workdir/host_sh "$@"
+exit $?

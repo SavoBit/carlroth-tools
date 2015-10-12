@@ -1,0 +1,12 @@
+#!/bin/bash
+
+bindir=$(dirname $0)
+bindir=$(cd $bindir && pwd)
+. $bindir/../docker/switchlight/docker.mk
+
+if test $# -eq 0; then
+  exec docker exec -i -t "$DOCKER_CONTAINER_ID" bash -login
+else
+  cmd="IFS=; set -e; . ~/.bash_profile; cd $PWD;"$(printf " %q" "$@")
+  exec docker exec -i -t "$DOCKER_CONTAINER_ID" /bin/bash -c "$cmd"
+fi
