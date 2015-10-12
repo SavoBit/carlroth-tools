@@ -27,5 +27,5 @@ DOCKER_OS			= switch_team_deb7_builder
 
 default: Dockerfile apt.conf sudoers acng.conf
 
-include ../../make/rules.mk
+include ../../../make/rules.mk
 

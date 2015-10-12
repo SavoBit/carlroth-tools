@@ -27,7 +27,7 @@ DOCKER_OS			= ubuntu:14.04
 
 default: Dockerfile apt.conf
 
-include ../../make/rules.mk
+include ../../../make/rules.mk
 
 # See https://bigswitch.atlassian.net/wiki/display/BSC/Development+Environment+Setup
 BOOTSTRAP_PACKAGES		= \
