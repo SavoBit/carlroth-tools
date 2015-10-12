@@ -1,0 +1,132 @@
+##############################
+#
+# supplemental startup for boot2docker
+#
+# Installed by docker-machine-bootstrap
+#
+##############################
+
+# get supplemental RC data
+do_rc() {
+  local rc
+  rc=$1; shift
+  test -f "$rc" || return
+  echo "Getting configuration from $rc" 1>&2
+  cp "$rc" /tmp/rc
+  . /tmp/rc || :
+  rm /tmp/rc
+}
+
+do_mount() {
+  local src dst
+  src=$1; shift
+  dst=$1; shift
+  if test -d "$dst"; then
+    :
+  else
+    mkdir -p "$dst"
+  fi
+  if test "$DMB_NFSOPTS"; then
+    mount -o "$DMB_NFSOPTS" -t nfs "$src" "$dst"
+  else
+    mount -t nfs "$src" "$dst"
+  fi
+}
+
+test_ready() {
+  local host buf
+  host=$1; shift
+
+  if ping -c 3 -q $host 1>/dev/null; then
+    :
+  else
+    echo "Ping to $host failed with code $?" 1>&2
+    return 1
+  fi
+
+  buf=$(timeout -t 5 -s 9 rpcinfo ${DMB_HOST})
+  if test $? -ne 0; then
+    echo "rpcinfo to $host failed with code $?" 1>&2
+    return 1
+  fi
+  
+  case "$buf" in
+    *nfs*) return 0 ;;
+    *)
+      echo "rpcinfo for $host does not indicate nfs is running" 1>&2
+      return 1
+      ;;
+  esac
+}
+
+# tuck an RC file in next to the vmdk
+do_rc ${DMB_STOREPATH}/rc.local
+
+# OK to source the /Users configs here;
+# nfs mount not necessary
+if grep -q " /Users " /proc/mounts; then
+  for rc in /Users/*/.boot2dockerrc; do
+    do_rc "$rc"
+  done
+fi
+
+if test "$DMB_VOLUMES"; then
+  /usr/local/etc/init.d/nfs-client start
+
+  # ha ha, showmount does not work in boot2docker
+  if test_ready ${DMB_HOST}; then
+
+    needUsers=
+    for vol in ${DMB_VOLUMES}; do
+
+      if test "$vol" = "/Users"; then
+        needUsers=1
+        continue
+      fi
+      # special handling for /Users below
+ 
+      mpt=/${vol##*/}
+
+      grep -q " ${mpt} " /proc/mounts && continue
+      # already mounted
+
+      echo "Mounting ${DMB_HOST}:${vol}" 1>&2
+      do_mount "${DMB_HOST}:${vol}" "${mpt}"
+      
+      # see if there is an RC file here
+      do_rc "$mpt/.boot2dockerrc"
+
+    done
+
+    # special handling for /Users, which may already be mounted
+    if test "$needUsers"; then
+      if grep -q " /Users nfs " /proc/mounts; then
+        : # already mounted as NFS
+      elif grep -q " /Users " /proc/mounts; then
+        # mounted, but not as nfs
+        mpt=$(mktemp -d /tmp/Users-XXXXXX)
+        echo "Test-mounting ${DMB_HOST}:/Users" 1>&2
+        if do_mount "${DMB_HOST}:/Users" "$mpt"; then
+          echo "Finalizing mount for ${DMB_HOST}:/Users" 1>&2
+          umount /Users && mount --move "$mpt" /Users
+          # successfully mounted, we can replace the mount
+        fi
+      else
+
+        echo "Mounting ${DMB_HOST}:/Users" 1>&2
+        do_mount "${DMB_HOST}:/Users" "/Users"
+
+        # /Users was not previouly mounted, process rcs now
+        for rc in /Users/*/.boot2dockerrc; do
+          do_rc "$rc"
+        done
+
+      fi
+    fi
+
+  fi
+fi
+
+# Local variables:
+# mode: sh
+# End:
