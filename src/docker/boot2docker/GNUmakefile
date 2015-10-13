@@ -4,10 +4,11 @@
 #
 ######################################################################
 
-DRIVER		= virtualbox
-##DRIVER		= vmwarefusion
+##DRIVER		= virtualbox
+##MACHINE		= default
 
-MACHINE		= some-machine
+DRIVER		= vmwarefusion
+MACHINE		= fusion
 
 CREATE_OPTS	= \
   --virtualbox-memory 8192 \
