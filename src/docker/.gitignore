@@ -4,3 +4,4 @@ apt.conf
 docker.mk
 sudoers
 dockerid
+*.bak
