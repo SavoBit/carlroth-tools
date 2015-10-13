@@ -4,24 +4,10 @@
 #
 ######################################################################
 
-DOCKER_USER			= $(USER)
-DOCKER_HOME			= $(HOME)
-DOCKER_UID			= $(shell id -u)
-DOCKER_GID			= $(shell id -g)
-DOCKER_TMPDIR			= $(DOCKER_HOME)/tmp/floodlight-docker
-
-DOCKER_IMAGE			= $(DOCKER_USER)/floodlight
-DOCKER_CONTAINER		= $(DOCKER_USER)_floodlight
-DOCKER_HOST_CONTAINER		= $(DOCKER_CONTAINER)_host
-
-DOCKER_HOST_VOLUMES		= \
-  -v /home/roth:/home/roth \
-  -v /opt/bsn/container:/opt/bsn/container:ro \
-  -v /dev/log:/dev/log \
-  -v /lib/modules:/lib/modules:ro \
-  # THIS LINE INTENTIONALLY LEFT BLANK
-
+DOCKER_PROFILE			= floodlight
 DOCKER_OS			= ubuntu:14.04
+
+include ../../../make/config.mk
 
 -include docker.mk
 
@@ -41,4 +27,5 @@ BOOTSTRAP_PACKAGES		= \
 bootstrap: bootstrap-floodlight
 
 bootstrap-floodlight:
+	docker exec $(DOCKER_CONTAINER_ID) sudo apt-get update
 	docker exec $(DOCKER_CONTAINER_ID) sudo DEBIAN_FRONTEND=noninteractive apt-get -y install $(BOOTSTRAP_PACKAGES)
