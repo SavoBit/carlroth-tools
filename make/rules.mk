@@ -107,7 +107,7 @@ run:
 	> dockerid
 	@set -e; set -x ;\
 	id=$$(cat dockerid) ;\
-	sed -i -e '/DOCKER_CONTAINER_ID/d' docker.mk || : ;\
+	sed -i.bak -e '/DOCKER_CONTAINER_ID/d' docker.mk || : ;\
 	echo "DOCKER_CONTAINER_ID=$$id" >> docker.mk
 	$(MAKE) bootstrap
 
