@@ -24,7 +24,7 @@ apt.conf: GNUmakefile
 sudoers: GNUmakefile
 	echo "roth    ALL=(ALL:ALL) NOPASSWD:ALL" >> $@
 
-acng.conf: /etc/apt-cacher-ng/acng.conf GNUmakefile
+acng.conf.dist: /etc/apt-cacher-ng/acng.conf GNUmakefile
 	mkdir -p $(DOCKER_TMPDIR)/apt-cacher-ng
 	cp $< $@
 	sed \
@@ -34,6 +34,17 @@ acng.conf: /etc/apt-cacher-ng/acng.conf GNUmakefile
 	if test "$(http_proxy)"; then
 	  echo "Proxy: $(http_proxy)" >> $@
 	fi
+
+acng.conf: GNUmakefile
+	mkdir -p $(DOCKER_TMPDIR)/apt-cacher-ng
+	cp /dev/null $@
+	echo "Port: 3142" >> $@
+	echo "LogDir: $(DOCKER_TMPDIR)" >> $@
+	echo "CacheDir: $(DOCKER_TMPDIR)/apt-cacher-ng" >> $@
+	echo "ForeGround: 1" >> $@
+ifdef http_proxy
+	echo "Proxy: $(http_proxy)" >> $@
+endif
 
 clean-images:
 	@set -e; set -x ;\
@@ -45,10 +56,11 @@ clean-images:
 	done
 	@set -e; set -x ;\
 	l="$(DOCKER_IMAGE)"; for e in $$l; do \
-	if docker inspect "$$e" 1>/dev/null 2>&1; then \
-	  docker rmi -f $$e || : ;\
-	fi
-	docker ps -a --no-trunc | grep $(DOCKER_CONTAINER) | xargs docker rm || :
+	  if docker inspect "$$e" 1>/dev/null 2>&1; then \
+	    docker rmi -f $$e || : ;\
+	  fi ;\
+	done
+	-docker ps -a --no-trunc | grep $(DOCKER_CONTAINER) | xargs docker rm
 
 create-images: Dockerfile apt.conf sudoers acng.conf
 	docker run \
@@ -61,13 +73,19 @@ create-images: Dockerfile apt.conf sudoers acng.conf
 	> dockerid
 	@set -e; set -x ;\
 	id=$$(cat dockerid) ;\
-	sed -i '/DOCKER_HOST_CONTAINER_ID/d' docker.mk || : ;\
+	sed -i -e '/DOCKER_HOST_CONTAINER_ID/d' docker.mk || : ;\
 	echo "DOCKER_HOST_CONTAINER_ID=$$id" >> docker.mk
 	docker build -t $(DOCKER_IMAGE) .
 
+ifeq ($(shell uname -s),Darwin)
+SSH_AUTH_REAL	= $(shell python -c "import os; print os.path.realpath(os.environ['SSH_AUTH_SOCK']);")
+else
+SSH_AUTH_REAL	= $(shell realpath $(SSH_AUTH_SOCK))
+endif
+
 run:
 	@set -e; set -x ;\
-	auth=$$(realpath $(SSH_AUTH_SOCK)) ;\
+	auth="$(SSH_AUTH_REAL)" ;\
 	sshdir=$$(dirname $$auth) ;\
 	docker run \
 	  --detach \
@@ -85,7 +103,7 @@ run:
 	> dockerid
 	@set -e; set -x ;\
 	id=$$(cat dockerid) ;\
-	sed -i '/DOCKER_CONTAINER_ID/d' docker.mk || : ;\
+	sed -i -e '/DOCKER_CONTAINER_ID/d' docker.mk || : ;\
 	echo "DOCKER_CONTAINER_ID=$$id" >> docker.mk
 	$(MAKE) bootstrap
 
@@ -94,3 +112,6 @@ bootstrap:
 
 shell:
 	docker exec -i -t $(DOCKER_CONTAINER_ID) bash -login
+
+clean:
+	rm -f Dockerfile apt.conf acng.conf
