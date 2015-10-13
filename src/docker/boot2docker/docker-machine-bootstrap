@@ -76,11 +76,40 @@ class Bootstrap:
         self.volumes = volumes
 
         self.data = {}
+        self.hostAddr = self.machineAddr = self.netmask = self.network = None
         self._inspect()
 
     def _inspect(self):
         cmd = ('docker-machine', 'inspect', self.machine,)
         self.data = json.loads(subprocess.check_output(cmd))
+
+        self.machineAddr = self.data['Driver']['IPAddress']
+        self.log.info("machine address %s", self.machineAddr)
+
+        if 'HostOnlyCIDR' in self.data['Driver']:
+            # VirtualBox
+            self.hostAddr, sep, bits = self.data['Driver']['HostOnlyCIDR'].partition('/')
+            self.log.info("host address %s", self.hostAddr)
+            bits = int(bits)
+        else:
+            # likely Fusion
+            bits = 24
+            addrInt = inet_aton(self.machineAddr)
+            maskInt = inet_bitston(int(bits))
+            addrInt &=  maskInt
+            addrInt |= 0x00000001
+            self.hostAddr = inet_ntoa(addrInt)
+            self.log.warn("no CIDR address, assuming %s/%d",
+                          self.hostAddr, bits)
+
+        self.netmask = inet_bitstoa(bits)
+        self.log.info("netmask %s", self.netmask)
+
+        addrInt = inet_aton(self.machineAddr)
+        maskInt = inet_aton(self.netmask)
+        netInt = addrInt & maskInt
+        self.network = inet_ntoa(netInt)
+        self.log.info("network %s", self.network)
 
     def setUpProfile(self):
 
@@ -100,11 +129,9 @@ class Bootstrap:
             else:
                 profileBuf = profileBuf[:p+1]
 
-        hostAddr, sep, bits = self.data['Driver']['HostOnlyCIDR'].partition('/')
-
         ctx = dict(storePath=self.data['StorePath'],
                    volumes=" ".join(self.volumes),
-                   host=hostAddr,
+                   host=self.hostAddr,
                    nfsopts=NFSOPTS)
         with open(profilePath, "w") as fd:
             fd.write(profileBuf)
@@ -123,20 +150,7 @@ class Bootstrap:
 
     def setUpExports(self):
 
-        machineAddr = self.data['Driver']['IPAddress']
-        self.log.info("machine address %s", machineAddr)
-
-        hostAddr, sep, bits = self.data['Driver']['HostOnlyCIDR'].partition('/')
-        self.log.info("host address %s", hostAddr)
-
-        hostAddrInt = inet_aton(hostAddr)
-        maskInt = inet_bitston(int(bits))
-        mask = inet_ntoa(maskInt)
-        netInt = hostAddrInt & maskInt
-        net = inet_ntoa(netInt)
-        self.log.info("network address %s", net)
-
-        exports = getShowmount(hostAddr)
+        exports = getShowmount(self.hostAddr)
         self.log.info("found exports for %s", ", ".join(exports))
 
         needsRestart = False
@@ -146,18 +160,18 @@ class Bootstrap:
                 self.log.warn("missing export for %s", volume)
                 needsExport = True
                 needsRestart = True
-            elif net not in exports[volume]:
-                self.log.warn("missing export for %s --> %s", net, volume)
+            elif self.network not in exports[volume]:
+                self.log.warn("missing export for %s --> %s", self.network, volume)
                 needsExport = True
                 needsRestart = True
             if needsExport:
-                self.log.info("adding export for %s --> %s", net, volume)
+                self.log.info("adding export for %s --> %s", self.network, volume)
                 fno, exportPath = tempfile.mkstemp(prefix='exports-')
                 with os.fdopen(fno, "w") as fd:
                     with open("/etc/exports") as fd2:
                         fd.write(fd2.read())
                     fd.write("%s -alldirs -maproot=root:wheel -network %s -mask %s\n"
-                             % (volume, net, mask,))
+                             % (volume, self.network, self.netmask,))
                 if os.getuid() == 0:
                     shutil.copy(exportPath, "/etc/exports")
                 else:
@@ -173,14 +187,14 @@ class Bootstrap:
             subprocess.check_call(cmd)
 
         # test the final result to make sure we are actually exporting
-        exports = getShowmount(hostAddr)
+        exports = getShowmount(self.hostAddr)
         foundAll = True
         for volume in self.volumes:
             if volume not in exports:
                 self.log.warn("unable to export %s", volume)
                 foundAll = False
-            if net not in exports[volume]:
-                self.log.warn("unable to export %s --> %s", net, volume)
+            if self.network not in exports[volume]:
+                self.log.warn("unable to export %s --> %s", self.network, volume)
                 foundAll = False
         if not foundAll:
             self.log.error("not all volumes were exported")
