@@ -26,6 +26,17 @@ sshKey = os.path.join(storePath, 'id_rsa')
 remoteCmd = " ".join(args)
 remoteCmd = "IFS=; sudo -- /bin/sh -c \"%s\"" % remoteCmd
 
+# HACK HACK HACK
+# not clear how to compute the real hypervisor address
+sys.stderr.write("driver name is %s\n" % data['DriverName'])
+if data['DriverName'] == 'vmwarefusion':
+    # Fusion, using a DHCP pool
+    # (note that docker-machine grovels the vmx file for the full answer)
+    remoteAddr = data['Driver']['IPAddress']
+else:
+    # dumb, assume some sort of host-only port forwarding
+    remoteAddr = 'localhost'
+
 # scrape this from 'docker-machine --debug scp'
 cmd = ('ssh',
        '-oPasswordAuthentication=no',
@@ -38,7 +49,7 @@ cmd = ('ssh',
        '-i', sshKey,
        '-p', str(sshPort),
        '-oUser=docker',
-       'localhost',
+       remoteAddr,
        '--',
        '/bin/sh', '-c', remoteCmd,)
 
