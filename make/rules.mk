@@ -6,6 +6,7 @@
 
 Dockerfile: Dockerfile.in GNUmakefile
 	sed \
+	  -e "s|@IMAGE@|$(DOCKER_OS)|g" \
 	  -e "s|@USER@|$(DOCKER_USER)|g" \
 	  -e "s|@UID@|$(DOCKER_UID)|g" \
 	  -e "s|@GID@|$(DOCKER_GID)|g" \
@@ -83,22 +84,25 @@ else
 SSH_AUTH_REAL	= $(shell realpath $(SSH_AUTH_SOCK))
 endif
 
+SSH_AUTH_DIR	= $(shell dirname $(SSH_AUTH_REAL))
+
+DOCKER_RUN_OPTS	= \
+  --detach \
+  --privileged --net host \
+  -t -i \
+  --user $(DOCKER_UID) \
+  -w $(PWD) \
+  -v $(SSH_AUTH_DIR):$(SSH_AUTH_DIR) \
+  -e SSH_AUTH_SOCK=$(SSH_AUTH_REAL) \
+  # THIS LINE INTENTIONALLY LEFT BLANK
+
 run:
-	@set -e; set -x ;\
-	auth="$(SSH_AUTH_REAL)" ;\
-	sshdir=$$(dirname $$auth) ;\
 	docker run \
-	  --detach \
-	  --privileged --net host \
-	  -t -i \
+	  $(DOCKER_RUN_OPTS) \
 	  --volumes-from $(DOCKER_HOST_CONTAINER) \
-	  --user $(DOCKER_UID) \
-	  -w $(PWD) \
 	  --name $(DOCKER_CONTAINER) \
 	  -e DOCKER_CONTAINER=$(DOCKER_IMAGE) \
 	  -e DOCKER_IMAGE=$(DOCKER_IMAGE) \
-	  -v $${sshdir}:$${sshdir} \
-	  -e SSH_AUTH_SOCK=$${auth} \
 	  $(DOCKER_IMAGE) \
 	> dockerid
 	@set -e; set -x ;\
