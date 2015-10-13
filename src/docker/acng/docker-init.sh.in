@@ -1,0 +1,5 @@
+#!/bin/sh
+
+DOCKER_TMPDIR="@DOCKER_TMPDIR@"
+echo "Starting apt-cacher-ng..."
+exec apt-cacher-ng -c "${DOCKER_TMPDIR}"

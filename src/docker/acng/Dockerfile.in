@@ -1,0 +1,11 @@
+# build the switchlight build environment
+FROM @IMAGE@
+MAINTAINER Carl Roth <carl.roth@bigswitch.com>
+COPY docker-init.sh /docker-init.sh
+ENTRYPOINT ["/docker-init.sh"]
+EXPOSE 3142
+##CMD bash
+ENV TERM linux
+ENV USER @USER@
+ENV HOME @HOME@
+
