@@ -15,7 +15,7 @@ import logging
 import tempfile
 import shutil
 
-SCP_ROOT = os.path.join(os.path.dirname(__file__), 'docker-machine-scp-root')
+DOCKER_MACHINE_SSH = "docker-machine-ssh"
 NFSOPTS = "rsize=65536,wsize=65536,intr,noatime"
 
 def inet_aton(addr):
@@ -57,6 +57,11 @@ DMB_STOREPATH="%(storePath)s"
 DMB_VOLUMES="%(volumes)s"
 DMB_HOST="%(host)s"
 DMB_NFSOPTS="%(nfsopts)s"
+DMB_CONTAINER_USER="docker-container"
+DMB_CONTAINER_UID="%(uid)s"
+DMB_CONTAINER_GROUP="docker-container"
+DMB_CONTAINER_GID="%(gid)s"
+DMB_CONTAINER_PUBKEY="%(pubkey)s"
 
 if test -f /var/lib/boot2docker/rc.local; then
   . /var/lib/boot2docker/rc.local || :
@@ -69,11 +74,16 @@ fi
 
 class Bootstrap:
 
-    def __init__(self, machine, srcdir, volumes=[], log=None):
+    def __init__(self, machine, srcdir,
+                 uid=None, gid=None,
+                 volumes=[],
+                 log=None):
         self.log = log or logging.getLogger(self.__class__.__name__)
         self.machine = machine
         self.srcdir = srcdir
         self.volumes = volumes
+        self.uid = uid
+        self.gid = gid
 
         self.data = {}
         self.hostAddr = self.machineAddr = self.netmask = self.network = None
@@ -129,22 +139,39 @@ class Bootstrap:
             else:
                 profileBuf = profileBuf[:p+1]
 
+        with open(os.path.join(self.data['StorePath'], 'id_rsa.pub')) as fd:
+            keybuf = fd.read().strip()
         ctx = dict(storePath=self.data['StorePath'],
                    volumes=" ".join(self.volumes),
+                   uid=self.uid or "", gid=self.gid or "",
                    host=self.hostAddr,
+                   pubkey=keybuf,
                    nfsopts=NFSOPTS)
         with open(profilePath, "w") as fd:
             fd.write(profileBuf)
             fd.write(PROFILE_TAIL % ctx)
 
-        cmd = (SCP_ROOT, profilePath, self.machine + ':' + '/var/lib/boot2docker/profile',)
-        subprocess.check_call(cmd)
+        cmd = ('scp', '-oUser=root', '-S', DOCKER_MACHINE_SSH,
+               profilePath, self.machine + ':' + '/var/lib/boot2docker/profile',)
+        self.log.info("command %s", cmd)
+        try:
+            subprocess.check_call(cmd)
+        except subprocess.CalledProcessError, what:
+            sys.stderr.write(what.output or "")
+            self.log.error("scp failed")
+            return what.returncode
         os.unlink(profilePath)
 
         self.log.info("installing rc.local")
         rcPath = os.path.join(self.srcdir, "rc.local")
-        cmd = (SCP_ROOT, rcPath, self.machine + ':' + '/var/lib/boot2docker/rc.local',)
-        subprocess.check_call(cmd)
+        cmd = ('scp', '-S', DOCKER_MACHINE_SSH, '-oUser=root',
+               rcPath, self.machine + ':' + '/var/lib/boot2docker/rc.local',)
+        try:
+            subprocess.check_call(cmd)
+        except subprocess.CalledProcessError, what:
+            sys.stderr.write(what.output or "")
+            self.log.error("scp failed")
+            return what.returncode
 
         return 0
 
@@ -260,6 +287,11 @@ ap.add_argument("machine", type=str,
 ap.add_argument("--volume", action='append',
                 help="Add an NFS volume (can be specified multiple times)")
 
+ap.add_argument('--container-uid', type=int, dest='uid',
+                help="Userland UID for docker containers")
+ap.add_argument('--container-gid', type=int, dest='gid',
+                help="Userland UID for docker containers")
+
 def main():
     logging.basicConfig()
     logger = logging.getLogger("dmb")
@@ -273,6 +305,7 @@ def main():
     b = Bootstrap(opts.machine,
                   os.path.dirname(__file__),
                   volumes=opts.volume,
+                  uid=opts.uid, gid=opts.gid,
                   log=logger)
     try:
         code = b.run()
