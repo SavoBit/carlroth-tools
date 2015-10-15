@@ -399,12 +399,10 @@ class Runner:
             code = what.returncode
         if code == 0:
             self.log.info("PASS: ssh-agent enabled")
-            return 1
         else:
             self.log.error("FAIL: cannot enable ssh-agent")
             return 1
 
-        self.log.error("not implemented")
         return 0
 
     def _testClosed(self):
