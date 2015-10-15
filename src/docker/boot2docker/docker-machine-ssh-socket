@@ -1,0 +1,568 @@
+#!/usr/bin/python
+
+"""docker-machine-ssh-socket
+
+Maintain the SSH control socket.
+"""
+
+import os, sys, pwd
+import logging
+import argparse
+import subprocess
+import json
+import time
+
+class Runner:
+
+    CREATE = 'create'
+    CLOSE = 'close'
+    INSPECT = 'inspect'
+    TEST = 'test'
+    EXEC = 'exec'
+
+    USER = 'docker-container'
+    GROUP = 'docker-container'
+    # set these up with the bootstrap script
+
+    def __init__(self, machine, mode,
+                 uid=None, gid=None,
+                 args=[],
+                 log=None):
+        self.log = log or logging.getLogger(self.__class__.__name__)
+
+        if uid is None:
+            self.uid = os.getuid()
+        else:
+            self.uid = uid
+
+        if gid is None:
+            self.gid = pwd.getpwuid(self.uid).pw_gid
+        else:
+            self.gid = gid
+
+        self.args = args
+
+        self.machine = machine
+        self.mode = mode
+        self.controlPath = None
+
+    def run(self):
+
+        if self.mode == self.EXEC:
+            pass
+        else:
+            if self.args:
+                self.log.error("extra arguments")
+                return 1
+
+        cmd = ('docker-machine', 'inspect', self.machine,)
+        try:
+            buf = subprocess.check_output(cmd)
+            code = 0
+        except subprocess.CalledProcessError, what:
+            sys.stderr.write(what.output or "")
+            self.log.error("inspect failed")
+            code = what.returncode
+        if code: return code
+        self.data = json.loads(buf)
+
+        self.controlPath = os.path.join(self.data['StorePath'], 'ssh-control.sock')
+
+        if self.mode == self.CREATE:
+            code = self._create()
+            if code: return code
+            code = self._test()
+            if code: return code
+            return 0
+
+        if self.mode == self.TEST:
+            code = self._test()
+            if code: return code
+            return 0
+
+        if self.mode == self.CLOSE:
+            code = self._close()
+            if code: return code
+            code = self._testClosed()
+            if code: return code
+            return 0
+
+        if self.mode == self.INSPECT:
+            code = self._inspect()
+            if code: return code
+            return 0
+
+        if self.mode == self.EXEC:
+            code = self._exec()
+            if code: return code
+            return 0
+
+        self.log.error("invalid/unimplemented mode")
+        return 1
+
+    def _create(self):
+
+        if os.path.exists(self.controlPath):
+            self.log.error("control path already exists")
+            return 1
+
+        code = self._testLocal()
+        if code: return code
+
+        code = self._testLogin(multiplex=False)
+        if code: return code
+
+        self.log.info("creating persistent control socket %s", self.controlPath)
+        cmd = ('docker-machine-ssh',
+               '-A',
+               '-oControlMaster=yes',
+               '-oControlPersist=yes',
+               '-oControlPath=' + self.controlPath,
+               self.machine,
+               '/bin/true',)
+        try:
+            subprocess.check_call(cmd)
+            code = 0
+        except subprocess.CalledProcessError, what:
+            self.log.error("cannot create control path")
+            code = what.returncode
+        if code: return code
+
+        self.log.info("getting ssh-agent socket")
+        cmd = ('docker-machine-ssh',
+               '-oControlPath=' + self.controlPath,
+               self.machine,
+               'printenv', 'SSH_AUTH_SOCK',)
+        try:
+            auth = subprocess.check_output(cmd).strip()
+        except subprocess.CalledProcessError, what:
+            sys.stderr.write(what.output or "")
+            self.log.error("cannot create control path")
+            code = what.returncode
+        if code: return code
+        authdir = os.path.dirname(auth)
+        self.log.info("found ssh-agent at %s", auth)
+
+        self.log.info("fixing agent permissions")
+        cmd = ('docker-machine-ssh',
+               '-oControlPath=' + self.controlPath,
+               '-oUser=root',
+               self.machine,
+               'chown', ('%d:%d' % (self.uid, self.gid,)), authdir)
+        try:
+            subprocess.check_call(cmd)
+            code = 0
+        except subprocess.CalledProcessError, what:
+            self.log.error("chown failed")
+            code = what.returncode
+        if code: return code
+        cmd = ('docker-machine-ssh',
+               '-oControlPath=' + self.controlPath,
+               '-oUser=root',
+               self.machine,
+               'chown', ('%s:%s' % (self.uid, self.gid,)), auth)
+        try:
+            subprocess.check_call(cmd)
+            code = 0
+        except subprocess.CalledProcessError, what:
+            self.log.error("chown failed")
+            code = what.returncode
+        if code: return code
+
+        return 0
+
+    def _close(self):
+
+        if not os.path.exists(self.controlPath):
+            self.log.info("control path missing (OK)")
+            return 0
+
+        cmd = ('docker-machine-ssh',
+               '-oControlPath=' + self.controlPath,
+               self.machine,
+               '-O', 'exit',)
+        try:
+            subprocess.check_call(cmd)
+            code = 0
+        except subprocess.CalledProcessError, what:
+            self.log.error("ssh failed")
+            code = what.returncode
+        if code: return code
+
+        code = self._testClosed()
+        if code: return code
+
+        return 0
+
+    def _testLogin(self, multiplex=True):
+
+        self.log.info("testing docker login")
+        cmd = ['docker-machine-ssh',
+               self.machine,
+               '--',
+               'id', '-u',]
+        if multiplex:
+            cmd[1:1] = ['-oControlPath=' + self.controlPath,]
+        else:
+            cmd[1:1] = ['-oControlPath=none',]
+        try:
+            uid = int(subprocess.check_output(cmd).strip())
+            code = 0
+        except subprocess.CalledProcessError, what:
+            sys.stderr.write(what.output or "")
+            self.log.error("docker login failed")
+            code = what.returncode
+        if code: return code
+        if uid <= 0:
+            self.log.error("invalid (root) uid")
+            return 1
+
+        self.log.info("testing root login")
+        cmd = ['docker-machine-ssh',
+               '-oUser=root',
+               self.machine,
+               '--',
+               'id', '-u',]
+        if multiplex:
+            cmd[1:1] = ['-oControlPath=' + self.controlPath,]
+        else:
+            cmd[1:1] = ['-oControlPath=none',]
+        try:
+            uid = int(subprocess.check_output(cmd).strip())
+            code = 0
+        except subprocess.CalledProcessError, what:
+            sys.stderr.write(what.output or "")
+            self.log.error("root login failed")
+            code = what.returncode
+        if code: return code
+        if uid != 0:
+            self.log.error("invalid (non-root) uid %d", uid)
+            return 1
+
+        self.log.info("testing container login")
+        cmd = ['docker-machine-ssh',
+               '-oUser=' + self.USER,
+               self.machine,
+               '--',
+               'id', '-u',]
+        if multiplex:
+            cmd[1:1] = ['-oControlPath=' + self.controlPath,]
+        else:
+            cmd[1:1] = ['-oControlPath=none',]
+        try:
+            uid = int(subprocess.check_output(cmd).strip())
+            code = 0
+        except subprocess.CalledProcessError, what:
+            sys.stderr.write(what.output or "")
+            self.log.error("container login failed")
+            code = what.returncode
+        if code: return code
+        if uid != self.uid:
+            self.log.error("invalid (non-container) uid %d", uid)
+            return 1
+
+        return 0
+
+    def _testLocal(self):
+        """Test health of the local ssh-agent.
+
+        1. verify the environment is set
+        2. verify that ssh-agent can connect
+        """
+
+        if 'SSH_AUTH_SOCK' not in os.environ:
+            self.log.error("missing SSH_AUTH_SOCK")
+            return 1
+
+        self.log.info("testing local ssh-agent")
+        cmd = ('ssh-add', '-l',)
+        try:
+            subprocess.check_call(cmd)
+            code = 0
+        except:
+            self.log.error("ssh-add failed")
+            code = 1
+        if code: return code
+
+        return 0
+
+    def _test(self):
+
+        if not os.path.exists(self.controlPath):
+            self.log.error("missing control path %s", self.controlPath)
+            return 1
+
+        code = self._testLocal()
+        if code: return code
+
+        code = self._testLogin(multiplex=False)
+        if code: return code
+
+        code = self._testLogin(multiplex=True)
+        if code: return code
+
+        # 1. verify that the control socket is working;
+        #    multiple connections using the socket indicate the same
+        #    (initial) connection port
+        self.log.info("testing SSH_CONNECTION port persistence")
+        cmd = ('docker-machine-ssh',
+               '-a',
+               '-oControlPath=' + self.controlPath,
+               self.machine,
+               'printenv', 'SSH_CONNECTION',)
+        p1 = subprocess.check_output(cmd)
+        p1 = int(p1.split()[1])
+        p2 = subprocess.check_output(cmd)
+        p2 = int(p2.split()[1])
+        if p1 != p2:
+            self.log.error("mismatched ports %d, %d: control path is not enabled",
+                           p1, p2)
+            return 1
+        self.log.info("SSH_CONNECTION using persistent port %d (OK)",
+                      p1)
+
+        # 2. verify that the process holding the control master
+        #    has an ssh-agent attached to it
+        self.log.info("extracting persistent SSH_AUTH_SOCK")
+        cmd = ('docker-machine-ssh',
+               '-a',
+               '-oControlPath=' + self.controlPath,
+               self.machine,
+               'printenv', 'SSH_AUTH_SOCK',)
+        auth = subprocess.check_output(cmd).strip()
+        if not auth:
+            self.log.error("no ssh-agent socket found")
+            return 1
+        self.log.info("found ssh-agent socket %s", auth)
+
+        # 3. verify that the container user does not see this socket
+        cmd = ('docker-machine-ssh',
+               '-a',
+               '-oControlPath=' + self.controlPath,
+               '-oUser=' + self.USER,
+               self.machine,
+               'printenv', 'SSH_AUTH_SOCK',)
+        try:
+            auth2 = subprocess.check_output(cmd).strip()
+            code = 0
+        except subprocess.CalledProcessError, what:
+            if what.returncode == 1:
+                auth2 = (what.output or "").strip()
+                code = 0
+            else:
+                self.log.error("ssh failed")
+                code = what.returncode
+        if code: return code
+        if auth2:
+            self.log.error("XPASS: ssh-agent is visible to container user")
+            return 1
+        else:
+            self.log.error("XFAIL: ssh-agent is invisible to container user (OK)")
+
+        # 3. verify that we can connect to the control master
+        #    and *not* forward our ssh-agent to it
+        self.log.info("testing that ssh-agent can be disabled")
+        cmd = ('docker-machine-ssh',
+               '-a',
+               '-oControlPath=' + self.controlPath,
+               '-oUser=%s' % self.USER,
+               self.machine,
+               '--',
+               'ssh-add', '-l',)
+        try:
+            subprocess.check_call(cmd)
+            code = 0
+        except subprocess.CalledProcessError, what:
+            code = what.returncode
+        if code == 0:
+            self.log.error("XPASS: disabled ssh-agent unexpected success")
+            return 1
+        else:
+            self.log.info("XFAIL: disabled ssh-agent failed (OK)")
+
+        # 4. verify that we can enable ssh-agent explicitly
+        #    to use the control master
+        self.log.info("testing that ssh-agent can be enabled")
+        cmd = ('docker-machine-ssh',
+               '-a',
+               '-oControlPath=' + self.controlPath,
+               '-oUser=%s' % self.USER,
+               self.machine,
+               '--',
+               'env', 'SSH_AUTH_SOCK=' + auth, 'ssh-add', '-l',)
+        try:
+            subprocess.check_call(cmd)
+            code = 0
+        except subprocess.CalledProcessError, what:
+            self.log.warn("+ " + " ".join(cmd))
+            self.log.error("ssh-add failed")
+            code = what.returncode
+        if code == 0:
+            self.log.info("PASS: ssh-agent enabled")
+            return 1
+        else:
+            self.log.error("FAIL: cannot enable ssh-agent")
+            return 1
+
+        self.log.error("not implemented")
+        return 0
+
+    def _testClosed(self):
+        """Verify that the control path is closed."""
+
+        now = time.time()
+        future = now + 10
+
+        while True:
+            now = time.time()
+            if now > future:
+                self.log.warn("timed out waiting for control socket to shut down")
+                break
+
+            if not os.path.exists(self.controlPath): break
+            cmd = ('docker-machine-ssh',
+                   '-oControlPath=' + self.controlPath,
+                   self.machine,
+                   '/bin/true',)
+            try:
+                subprocess.check_call(cmd)
+                code = 0
+            except subprocess.CalledProcessError, what:
+                code = what.returncode
+            if code:
+                self.log.warn("control path not yet deleted")
+            else:
+                self.log.warn("control path still active")
+
+            time.sleep(1.0)
+
+        if os.path.exists(self.controlPath):
+            self.log.error("unable to terminate control socket")
+            return 1
+        return 0
+
+    def _inspect(self):
+        if not os.path.exists(self.controlPath):
+            self.log.error("missing control path %s", self.controlPath)
+            return 1
+        cmd = ('docker-machine-ssh',
+               '-oControlPath=' + self.controlPath,
+               self.machine,
+               'printenv', 'SSH_AUTH_SOCK',)
+        try:
+            auth = subprocess.check_output(cmd).strip()
+            code = 0
+        except subprocess.CalledProcessError, what:
+            sys.stderr.write(what.output or "")
+            self.log.error("ssh failed")
+            code = what.returncode
+        if code: return code
+
+        sys.stdout.write("DOCKER_MACHINE_SSH_CONTROL_PATH=%s\n" % self.controlPath)
+        sys.stdout.write("DOCKER_MACHINE_SSH_AGENT=%s\n" % auth)
+
+        return 0
+
+    def _exec(self):
+        if not os.path.exists(self.controlPath):
+            self.log.error("missing control path %s", self.controlPath)
+            return 1
+
+        cmd = ['docker-machine-ssh',
+               '-oControlPath=' + self.controlPath,
+               self.machine,]
+        if self.args:
+            cmd.append('--')
+            cmd.extend(self.args)
+        try:
+            subprocess.check_call(cmd)
+            code = 0
+        except subprocess.CalledProcessError, what:
+            code = what.returncode
+
+        return code
+
+    def shutdown(self):
+        pass
+
+ap = argparse.ArgumentParser()
+ap.add_argument('--container-uid', type=int, dest='uid',
+                help="User ID for container instances")
+ap.add_argument('--container-gid', type=int, dest='gid',
+                help="Group ID for container instances")
+
+ap.add_argument('--create', action='store_true',
+                help="Create control socket")
+ap.add_argument('--close', action='store_true',
+                help="Close control socket")
+ap.add_argument('--test', action='store_true',
+                help="Test control socket ssh-agent support")
+ap.add_argument('--inspect', action='store_true',
+                help="Print ssh-agent setting")
+ap.add_argument('--exec', action='store_true', dest='exec_',
+                help="Execute command using control socket")
+
+ap.add_argument('machine', type=str,
+                help="Machine name")
+ap.add_argument('arg', type=str, nargs="*",
+                help="Command line arguments for --exec")
+
+def main():
+    logging.basicConfig()
+    logger = logging.getLogger("dmssh")
+    logger.setLevel(logging.DEBUG)
+
+    try:
+        opts = ap.parse_args()
+    except SystemExit, what:
+        sys.exit(what.code)
+
+    mode = None
+    if opts.create:
+        if mode is None:
+            mode = Runner.CREATE
+        else:
+            logger.error("duplicate mode")
+            sys.exit(1)
+    if opts.close:
+        if mode is None:
+            mode = Runner.CLOSE
+        else:
+            logger.error("duplicate mode")
+            sys.exit(1)
+    if opts.test:
+        if mode is None:
+            mode = Runner.TEST
+        else:
+            logger.error("duplicate mode")
+            sys.exit(1)
+    if opts.inspect:
+        if mode is None:
+            mode = Runner.INSPECT
+        else:
+            logger.error("duplicate mode")
+            sys.exit(1)
+    if opts.exec_:
+        if mode is None:
+            mode = Runner.EXEC
+        else:
+            logger.error("duplicate mode")
+            sys.exit(1)
+    if mode is None:
+        logger.error("missing mode")
+        sys.exit(1)
+
+    r = Runner(opts.machine, mode,
+               uid=opts.uid, gid=opts.gid,
+               args=opts.arg,
+               log=logger)
+    try:
+        code = r.run()
+    except:
+        logger.exception("runner failed")
+        code = 1
+    r.shutdown()
+    sys.exit(code)
+
+if __name__ == "__main__":
+    main()
