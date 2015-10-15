@@ -35,12 +35,19 @@ create-machine: GNUmakefile
 	sed -i.bak \
 	  -e '/DOCKER_MACHINE_NAME/d' \
 	  -e '/DOCKER_MACHINE_DRIVER/d' \
-	  -e '/DOCKER_MACHINE_SSH_CONTROL_PATH/d' \
-	  -e '/DOCKER_MACHINE_SSH_AGENT/d' \
 	  docker.mk ;\
 	eval $$(docker-machine env $(DOCKER_MACHINE_NAME)) ;\
 	echo "DOCKER_MACHINE_NAME=$(DOCKER_MACHINE_NAME)" >> docker.mk ;\
 	echo "DOCKER_MACHINE_DRIVER=$(DOCKER_MACHINE_DRIVER)" >> docker.mk ;\
+	$(MAKE) create-socket
+
+create-socket:
+	@: ;\
+	set -e; set -x ;\
+	sed -i.bak \
+	  -e '/DOCKER_MACHINE_SSH_CONTROL_PATH/d' \
+	  -e '/DOCKER_MACHINE_SSH_AGENT/d' \
+	  docker.mk ;\
 	./docker-machine-ssh-socket --close $(DOCKER_MACHINE_NAME)
 	./docker-machine-ssh-socket --create $(DOCKER_MACHINE_NAME)
 	./docker-machine-ssh-socket --inspect $(DOCKER_MACHINE_NAME) >> docker.mk
