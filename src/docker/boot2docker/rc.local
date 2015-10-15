@@ -44,7 +44,7 @@ test_ready() {
     return 1
   fi
 
-  buf=$(timeout -t 5 -s 9 rpcinfo ${DMB_HOST})
+  buf=$(timeout -t 5 -s 9 /usr/local/sbin/rpcinfo ${DMB_HOST})
   if test $? -ne 0; then
     echo "rpcinfo to $host failed with code $?" 1>&2
     return 1
@@ -68,6 +68,59 @@ if grep -q " /Users " /proc/mounts; then
   for rc in /Users/*/.boot2dockerrc; do
     do_rc "$rc"
   done
+fi
+
+if test "$DMB_CONTAINER_GID"; then
+  gid=$(id -g ${DMB_CONTAINER_GROUP} 2>/dev/null)
+  if test -z "$gid"; then
+    if grep -q ":x:${gid}:" /etc/group; then
+      # ha ha, duplicate GID
+      addgroup -g 9999 ${DMB_CONTAINER_GROUP}
+      gid=9999
+    else
+      addgroup -g $DMB_CONTAINER_GID ${DMB_CONTAINER_GROUP}
+      gid=$DMB_CONTAINER_GID
+    fi
+  fi
+  if test "$gid" != "$DMB_CONTAINER_GID"; then
+    # ha ha, no groupmod
+    sed -i.bak -e "s/^${DMB_CONTAINER_GROUP}:x:${gid}:\(.\)/${DMB_CONTAINER_GROUP}:x:${DMB_CONTAINER_GID}:\1/" /etc/group
+  fi
+fi
+
+if test "$DMB_CONTAINER_UID"; then
+  uid=$(id -u ${DMB_CONTAINER_USER} 2>/dev/null)
+  if test -z "$uid"; then
+    if grep -q ":x:${uid}:" /etc/passwd; then
+      # ha ha, duplicate UID
+      adduser -u 9999 -G ${DMB_CONTAINER_GROUP} -s /bin/sh -D -h /home/${DMB_CONTAINER_USER} -g "Container User" ${DMB_CONTAINER_USER}
+      uid=9999
+    else
+      adduser -u $DMB_CONTAINER_UID -G ${DMB_CONTAINER_GROUP} -s /bin/sh -D -h /home/${DMB_CONTAINER_USER} -g "Container User" ${DMB_CONTAINER_USER}
+      uid=$DMB_CONTAINER_UID
+    fi
+  fi
+  if test "$uid" != "${DMB_CONTAINER_UID}"; then
+    # ha ha, no usermod
+    sed -i.bak -e "s/^${DMB_CONTAINER_USER}:x:${uid}:${DMB_CONTAINER_GID}:\(.\)/${DMB_CONTAINER_USER}:x:${DMB_CONTAINER_UID}:${DMB_CONTAINER_GID}:\1/" /etc/passwd
+  fi
+fi
+
+if test "$DMB_CONTAINER_PUBKEY"; then
+
+  mkdir -p /home/${DMB_CONTAINER_USER}/.ssh
+  chown ${DMB_CONTAINER_USER}:${DMB_CONTAINER_GROUP} /home/${DMB_CONTAINER_USER}/.ssh
+  chmod 0700 /home/${DMB_CONTAINER_USER}/.ssh
+
+  cp /dev/null /home/${DMB_CONTAINER_USER}/.ssh/authorized_keys
+  chown ${DMB_CONTAINER_USER}:${DMB_CONTAINER_GROUP} /home/${DMB_CONTAINER_USER}/.ssh/authorized_keys
+  chmod 0600 /home/${DMB_CONTAINER_USER}/.ssh/authorized_keys
+  echo "$DMB_CONTAINER_PUBKEY" >> /home/${DMB_CONTAINER_USER}/.ssh/authorized_keys
+
+  cp /dev/null /home/${DMB_CONTAINER_USER}/.ssh/authorized_keys2
+  chown ${DMB_CONTAINER_USER}:${DMB_CONTAINER_GROUP} /home/${DMB_CONTAINER_USER}/.ssh/authorized_keys2
+  chmod 0600 /home/${DMB_CONTAINER_USER}/.ssh/authorized_keys2
+  echo "$DMB_CONTAINER_PUBKEY" >> /home/${DMB_CONTAINER_USER}/.ssh/authorized_keys2
 fi
 
 if test "$DMB_VOLUMES"; then
