@@ -4,6 +4,9 @@
 #
 ##############################
 
+srcdir		:= $(shell dirname $(lastword $(MAKEFILE_LIST)))
+top_srcdir	:= $(shell dirname $(srcdir))
+
 Dockerfile: Dockerfile.in GNUmakefile
 	sed \
 	  -e "s|@IMAGE@|$(DOCKER_OS)|g" \
@@ -72,14 +75,20 @@ create-images: Dockerfile apt.conf sudoers acng.conf
 	  $(DOCKER_OS) \
 	  /bin/true \
 	> dockerid
+	test -f docker.mk || cp /dev/null docker.mk
 	@set -e; set -x ;\
 	id=$$(cat dockerid) ;\
-	sed -i -e '/DOCKER_HOST_CONTAINER_ID/d' docker.mk || : ;\
+	sed -i.bak -e '/DOCKER_HOST_CONTAINER_ID/d' docker.mk ;\
 	echo "DOCKER_HOST_CONTAINER_ID=$$id" >> docker.mk
 	docker build -t $(DOCKER_IMAGE) .
 
 ifeq ($(shell uname -s),Darwin)
+-include $(top_srcdir)/src/docker/boot2docker/docker.mk
+ifdef DOCKER_MACHINE_SSH_CONTROL_PATH
+SSH_AUTH_REAL 	= $(shell docker-machine-ssh -S "$(DOCKER_MACHINE_SSH_CONTROL_PATH)" "$(DOCKER_MACHINE_NAME)" printenv SSH_AUTH_SOCK)
+else
 SSH_AUTH_REAL	= $(shell python -c "import os; print os.path.realpath(os.environ['SSH_AUTH_SOCK']);")
+endif
 else
 SSH_AUTH_REAL	= $(shell realpath $(SSH_AUTH_SOCK))
 endif
@@ -105,9 +114,10 @@ run:
 	  -e DOCKER_IMAGE=$(DOCKER_IMAGE) \
 	  $(DOCKER_IMAGE) \
 	> dockerid
+	test -f docker.mk || cp /dev/null docker.mk
 	@set -e; set -x ;\
 	id=$$(cat dockerid) ;\
-	sed -i.bak -e '/DOCKER_CONTAINER_ID/d' docker.mk || : ;\
+	sed -i.bak -e '/DOCKER_CONTAINER_ID/d' docker.mk ;\
 	echo "DOCKER_CONTAINER_ID=$$id" >> docker.mk
 	$(MAKE) bootstrap
 
