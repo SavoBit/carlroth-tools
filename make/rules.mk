@@ -10,6 +10,7 @@ top_srcdir	:= $(shell dirname $(srcdir))
 Dockerfile: Dockerfile.in GNUmakefile
 	sed \
 	  -e "s|@IMAGE@|$(DOCKER_OS)|g" \
+	  -e "s|@MAINTAINER@|$(DOCKER_MAINTAINER)|g" \
 	  -e "s|@USER@|$(DOCKER_USER)|g" \
 	  -e "s|@UID@|$(DOCKER_UID)|g" \
 	  -e "s|@GID@|$(DOCKER_GID)|g" \
@@ -22,11 +23,16 @@ apt.conf: GNUmakefile
 	cp /dev/null $@
 	echo "dir::cache \"$(DOCKER_TMPDIR)/apt/cache\";" >> $@
 	echo "dir::state \"$(DOCKER_TMPDIR)/apt/lib\";" >> $@
-	echo "acquire::http::proxy \"http://apt-proxy.eng.bigswitch.com:3142\";" >> $@
+	if nc -v -z localhost 3142 1>/dev/null 2>&1; then \
+	  echo "acquire::http::proxy \"http://localhost:3142\";" >> $@ ;\
+	elif nc -v -z apt-proxy.eng.bigswitch.com 3142 1>/dev/null 2>&1; then \
+	  echo "acquire::http::proxy \"http://apt-proxy.eng.bigswitch.com:3142\";" >> $@ ;\
+	fi
 	echo "debug::nolocking 1;" >> $@
 
 sudoers: GNUmakefile
-	echo "roth    ALL=(ALL:ALL) NOPASSWD:ALL" >> $@
+	cp /dev/null $@
+	echo "$(DOCKER_USER) ALL=(ALL:ALL) NOPASSWD:ALL" >> $@
 
 acng.conf.dist: /etc/apt-cacher-ng/acng.conf GNUmakefile
 	mkdir -p $(DOCKER_TMPDIR)/apt-cacher-ng
@@ -128,4 +134,4 @@ shell:
 	docker exec -i -t $(DOCKER_CONTAINER_ID) bash -login
 
 clean:
-	rm -f Dockerfile apt.conf acng.conf
+	rm -f Dockerfile apt.conf acng.conf sudoers
