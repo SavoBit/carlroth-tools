@@ -4,6 +4,7 @@
 #
 ######################################################################
 
+DOCKER_MAINTAINER		= Carl Roth <carl.roth@bigswitch.com>
 DOCKER_USER			= $(USER)
 DOCKER_HOME			= $(HOME)
 DOCKER_UID			= $(shell id -u)
