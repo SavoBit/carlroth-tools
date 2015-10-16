@@ -1,6 +1,6 @@
 # build the switchlight build environment
 FROM @IMAGE@
-MAINTAINER Carl Roth <carl.roth@bigswitch.com>
+MAINTAINER @MAINTAINER@
 COPY apt.conf /etc/apt/apt.conf.d/98docker-host
 COPY sudoers /etc/sudoers.d/sudoers
 RUN groupadd -o -g @GID@ @USER@
