@@ -25,3 +25,14 @@ BOOTSTRAP_PACKAGES		= \
 
 bootstrap-switchlight:
 	docker exec $(DOCKER_CONTAINER_ID) sudo DEBIAN_FRONTEND=noninteractive apt-get -y install $(BOOTSTRAP_PACKAGES)
+
+Dockerfile: apt.conf sudoers acng.conf switch-nfs.list
+
+switch-nfs.list:
+	cp /dev/null $@
+	echo "deb http://switch-nfs.hw.bigswitch.com/export/apt /" >> $@
+
+clean: clean-local
+
+clean-local:
+	rm -f switch-nfs.list
