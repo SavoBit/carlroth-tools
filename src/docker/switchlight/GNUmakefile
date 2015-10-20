@@ -30,7 +30,7 @@ Dockerfile: apt.conf sudoers acng.conf switch-nfs.list
 
 switch-nfs.list:
 	cp /dev/null $@
-	echo "deb http://switch-nfs.hw.bigswitch.com/export/apt /" >> $@
+	echo "deb http://switch-nfs.hw.bigswitch.com/export/apt/ stable main" >> $@
 
 clean: clean-local
 
