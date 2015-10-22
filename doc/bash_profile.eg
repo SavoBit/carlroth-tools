@@ -7,9 +7,17 @@
 ######################################################################
 
 case "$(uname -s)" in
+  Linux)
+    stat_d() {
+      stat -c "%d" ${runtime}      
+    }
+  ;;
   Darwin)
     realpath() {
       python -c "import os, sys; print os.path.realpath(sys.argv[1]);" "$@"
+    }
+    stat_d() {
+      stat -f "%d" ${runtime}      
     }
   ;;
 esac
@@ -94,7 +102,7 @@ if test ${SSH_AUTH_SOCK+set}; then
   # ok to move the socket, but keep it on the same filesystem
   # Also avoid $TMPDIR on MacOS, see above
   sshdir=${adst%/*}
-  if test $(stat -c "%d" ${runtime} 2>/dev/null) = $(stat -c "%d" ${sshdir}); then
+  if test $(stat_d ${runtime} 2>/dev/null) = $(stat_d ${sshdir}); then
     sshruntime=$runtime
   else
     set dummy /tmp/runtime-$(id -u)-*
@@ -171,5 +179,11 @@ fi
 ##############################
 #
 # End of .bash_profile.eg
+#
+# Local variables:
+# mode: sh
+# sh-basic-offset: 2
+# sh-indentation: 2
+# End:
 #
 ##############################
