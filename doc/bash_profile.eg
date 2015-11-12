@@ -1,0 +1,189 @@
+######################################################################
+#
+# bash_profile.eg.
+#
+# Sample settings for $HOME/.bash_profile
+#
+######################################################################
+
+case "$(uname -s)" in
+  Linux)
+    stat_d() {
+      stat -c "%d" ${runtime}      
+    }
+  ;;
+  Darwin)
+    realpath() {
+      python -c "import os, sys; print os.path.realpath(sys.argv[1]);" "$@"
+    }
+    stat_d() {
+      stat -f "%d" ${runtime}      
+    }
+  ;;
+esac
+
+##############################
+#
+# Compute a suitable cache directory for ccache
+#
+##############################
+
+case "$(uname -s)" in
+  Darwin)
+    cache=${HOME}/Library/Caches
+  ;;
+  Linux)
+    if grep -q docker /proc/self/cgroup; then
+      if test -d "${HOME}/Library/Caches"; then
+        cache=${HOME}/Library/Caches
+      else
+        cache=${XDG_CACHE_HOME-"${HOME}/.cache"}
+      fi
+    else
+      cache=${XDG_CACHE_HOME-"${HOME}/.cache"}
+    fi
+  ;;
+  *)
+    cache=${HOME}/tmp
+  ;;
+esac
+
+# See
+# http://git.buildroot.net/buildroot/commit/?id=433290761fceb476b095548eec10adf72405e050
+export CCACHE_DIR=${cache}/ccache
+export BR2_CCACHE_DIR=${cache}/buildroot-ccache
+export BUILDROOT_CACHE_DIR=${cache}/buildroot-ccache
+
+case ":${PATH}:" in
+  *:/usr/lib/ccache:*) ;;
+  *)
+    PATH=/usr/lib/ccache:$PATH
+  ;;
+esac
+
+##############################
+#
+# Compute a (temporary file) runtime directory
+# that persists across multiple logins
+#
+# (Here, slightly violates XDG in that it is not
+# guaranteed to be deleted on logout)
+#
+# Do *not* use $TMPDIR on MacOS, since the path
+# is too long to store UNIX domain sockets of any reasonable length
+#
+##############################
+
+runtime=${XDG_RUNTIME_DIR="/run/user/$(id -u)"}
+if test -d "$runtime"; then
+  :
+else
+  set dummy /tmp/runtime-$(id -u)-*
+  if test -d "$2"; then
+    runtime=$2
+  else
+    runtime=$(mktemp -d /tmp/runtime-$(id -u)-XXXXXX)
+  fi
+fi
+
+##############################
+#
+# Normalize the ssh-agent socket location so that it can be
+# shared with containers (and docker-machine)
+#
+##############################
+
+if test ${SSH_AUTH_SOCK+set}; then
+
+  # compute the real path of the ssh-agent socket
+
+  adst=$(realpath $SSH_AUTH_SOCK)
+
+  # ok to move the socket, but keep it on the same filesystem
+  # Also avoid $TMPDIR on MacOS, see above
+  sshdir=${adst%/*}
+  if test $(stat_d ${runtime} 2>/dev/null) = $(stat_d ${sshdir}); then
+    sshruntime=$runtime
+  else
+    set dummy /tmp/runtime-$(id -u)-*
+    if test -d "$2"; then
+      sshruntime="$2"
+    else
+      sshruntime=$(mktemp -d /tmp/runtime-$(id -u)-XXXXXX)
+    fi
+  fi
+
+  if test -S "$adst"; then
+    case "$adst" in
+      /tmp/ssh-*/agent.*)
+        # temporary socket set up by sshd
+        set dummy $SSH_CONNECTION
+        mkdir -p ${sshruntime}/ssh
+        mv $adst "${sshruntime}/ssh/ssh-agent-${2}-${3}"
+        adst="${sshruntime}/ssh/ssh-agent-${2}-${3}"
+      ;;
+    esac
+  fi
+
+  SSH_AUTH_SOCK=$adst
+
+  ##############################
+  #
+  # make sure the socket is actually working,
+  # else find another one
+  #
+  # TODO does not clean up broken sockets
+  #
+  ##############################
+  
+  if ssh-add -l 1>/dev/null 2>&1; then
+    :
+  else
+    # grovel through the ssh runtime dir to find a valid socket
+    for sock in $(/bin/ls -1t ${sshruntime}/ssh); do
+      if env SSH_AUTH_SOCK=${sshruntime}/ssh/$sock ssh-add -l 1>/dev/null 2>&1; then
+        SSH_AUTH_SOCK=${sshruntime}/ssh/$sock
+        break
+      fi
+    done
+  fi
+
+  # compute a friendly name for the environment variable
+
+  asrc=$HOME/.ssh/agent-socket
+
+  # detect isolate shell login
+  case "$SSH_CLIENT" in
+    10.198.0.*)
+      set dummy $SSH_CONNECTION
+      ifs=$ifs; IFS=.
+      set dummy $4
+      iso=$5
+      IFS=$ifs
+      asrc=$HOME/.ssh/agent-socket-iso${iso}
+      ;;
+  esac
+
+  # detect containers
+  cid=$(container-id)
+  if test "$cid"; then
+    asrc=$HOME/.ssh/agent-socket-docker-${cid}
+  fi
+
+  if test -S "$SSH_AUTH_SOCK"; then
+    ln -sf $SSH_AUTH_SOCK $asrc
+    export SSH_AUTH_SOCK=$asrc
+  fi
+fi
+
+##############################
+#
+# End of .bash_profile.eg
+#
+# Local variables:
+# mode: sh
+# sh-basic-offset: 2
+# sh-indentation: 2
+# End:
+#
+##############################
