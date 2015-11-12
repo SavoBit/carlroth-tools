@@ -9,6 +9,7 @@ DOCKER_USER			= $(USER)
 DOCKER_HOME			= $(HOME)
 DOCKER_UID			= $(shell id -u)
 DOCKER_GID			= $(shell id -g)
+DOCKER_SHELL			= bash -login
 
 ifeq ($(shell uname -s),Darwin)
 DOCKER_TMPDIR			= $(DOCKER_HOME)/Library/Caches/docker/$(DOCKER_PROFILE)
@@ -27,6 +28,9 @@ endif
 DOCKER_IMAGE			= $(DOCKER_USER)/$(DOCKER_PROFILE)
 DOCKER_CONTAINER		= $(DOCKER_USER)_$(DOCKER_PROFILE)
 DOCKER_HOST_CONTAINER		= $(DOCKER_CONTAINER)_host
+
+DOCKER_RUN_UID			= $(DOCKER_UID)
+# UID to use when creating the container with 'docker run'
 
 DOCKER_HOST_VOLUMES		= \
   -v /dev/log:/dev/log \
