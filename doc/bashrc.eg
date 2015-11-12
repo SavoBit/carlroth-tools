@@ -1,0 +1,25 @@
+##############################
+#
+# Sample .bashrc for docker
+#
+##############################
+
+if test "$PS1"; then
+  if test ${DOCKER_CONTAINER+set}; then
+    PS1="$DOCKER_CONTAINER@$$ $PS1"
+    if test $$ -eq 1; then
+      set -o ignoreeof
+    fi
+  elif test ${DOCKER_IMAGE+set}; then
+    PS1="$DOCKER_IMAGE@$$ $PS1"
+    if test $$ -eq 1; then
+      set -o ignoreeof
+    fi
+  else
+    function make() {
+      docker-make "$@"
+      return $?
+    }
+  fi
+fi
+
