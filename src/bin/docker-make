@@ -1,4 +1,12 @@
 #!/bin/bash
+#
+######################################################################
+#
+# docker-make
+#
+# Run 'make' in a configurable docker container
+#
+######################################################################
 
 if grep -q docker /proc/self/cgroup; then
   exec /usr/bin/make "$@"
