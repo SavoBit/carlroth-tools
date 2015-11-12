@@ -105,11 +105,17 @@ DOCKER_RUN_OPTS	= \
   --detach \
   --privileged --net host \
   -t -i \
-  --user $(DOCKER_UID) \
+  --user $(DOCKER_RUN_UID) \
   -w $(PWD) \
   -v $(SSH_AUTH_DIR):$(SSH_AUTH_DIR) \
   -e SSH_AUTH_SOCK=$(SSH_AUTH_REAL) \
   # THIS LINE INTENTIONALLY LEFT BLANK
+
+ifdef DISPLAY
+DOCKER_RUN_OPTS	+= \
+  -e DISPLAY=$(DISPLAY) \
+  # THIS LINE INTENTIONALLY LEFT BLANK
+endif
 
 run:
 	docker run \
@@ -131,7 +137,7 @@ bootstrap:
 	:
 
 shell:
-	docker exec -i -t $(DOCKER_CONTAINER_ID) bash -login
+	docker exec -i -t $(DOCKER_CONTAINER_ID) $(DOCKER_SHELL)
 
 clean:
 	rm -f Dockerfile apt.conf acng.conf sudoers
