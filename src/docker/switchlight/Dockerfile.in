@@ -3,25 +3,13 @@ FROM @IMAGE@
 MAINTAINER @MAINTAINER@
 COPY apt.conf /etc/apt/apt.conf.d/98docker-host
 COPY acng.conf /etc/apt-cacher-ng/acng.conf
-COPY docker-init.sh /docker-init.sh
 
 # Jeff needs to add this to the baseline image
 COPY switch-nfs.list /etc/apt/sources.list.d/switch-nfs.list
 
-# Jeff's switch light build is set up with a non-root user,
-# set USER temporarily here so that admin commands work
-USER root
-
-# update the UID and GID for the local system
-RUN usermod -o -u @UID@ -g @GID@ -d @HOME@ @USER@
-RUN groupmod -o -g @GID@ @USER@
-
-ENTRYPOINT ["/docker-init.sh"]
+ENTRYPOINT ["/bin/docker_shell", "--user", "@USER@:@UID@", "-c", "bash"]
 ENV TERM linux
 
-# done with admin commands, we can assign the real user now
 ENV USER @USER@
 USER @USER@
-
 ENV HOME @HOME@
-CMD bash

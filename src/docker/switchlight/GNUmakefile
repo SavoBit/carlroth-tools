@@ -5,14 +5,19 @@
 ######################################################################
 
 DOCKER_PROFILE			= switchlight
-##DOCKER_OS			= switch_team_deb7_builder
-DOCKER_OS			= bigswitchnetworks/onl_deb7_builder
+DOCKER_OS			= opennetworklinux/builder7:1.0
 
 include ../../../make/config.mk
 
 -include docker.mk
 
 default: Dockerfile apt.conf sudoers acng.conf
+
+DOCKER_RUN_UID			= root
+# create the container as root; the docker_shell command will later drop privs
+
+DOCKER_SHELL			= /bin/docker_shell --verbose --user "$(DOCKER_USER):$(DOCKER_UID)" -c "bash --login"
+# container UID is root
 
 include ../../../make/rules.mk
 
@@ -24,7 +29,7 @@ BOOTSTRAP_PACKAGES		= \
   # THIS LINE INTENTIONALLY LEFT BLANK
 
 bootstrap-switchlight:
-	docker exec $(DOCKER_CONTAINER_ID) sudo DEBIAN_FRONTEND=noninteractive apt-get -y install $(BOOTSTRAP_PACKAGES)
+	docker exec $(DOCKER_CONTAINER_ID) env DEBIAN_FRONTEND=noninteractive apt-get -y install $(BOOTSTRAP_PACKAGES)
 
 Dockerfile: apt.conf sudoers acng.conf switch-nfs.list
 
