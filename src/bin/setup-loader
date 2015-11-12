@@ -1,0 +1,45 @@
+#!/usr/bin/python
+
+"""setup-loader
+
+"""
+
+import sys
+import pexpect
+import subprocess
+from cStringIO import StringIO
+
+host = sys.argv[1]
+
+sw = pexpect.spawn("track console %s" % host)
+sw.logfile = sys.stdout
+
+sw.sendline("")
+i = sw.expect([pexpect.EOF, "loader# ",], timeout=2)
+if i == 0:
+   sys.stdout.write("*** EOF on console connection\n")
+   sys.exit(1)
+
+def check_call(cmd, timeout=-1):
+    if isinstance(cmd, basestring):
+       sw.sendline(cmd)
+    else:
+       sw.sendline(" ".join(cmd))
+    sw.expect("# ")
+    sw.sendline("PS1=\"loader<$?># \"")
+    sw.expect("loader[<]([-0-9]*)[>]# ", timeout=timeout)
+    code = int(sw.match.group(1))
+    sw.sendline("PS1=\"loader# \"")
+    sw.expect("loader# ", timeout=2)
+    if code != 0:
+       raise subprocess.CalledProcessError(code, cmd)
+
+check_call(('sed', '-i', '-e', 's/root::/root:bs2CN7HjUNy12:/', '/etc/shadow',),
+           timeout=2)
+check_call(('mkdir', '-p', '/etc/dropbear',), timeout=2)
+check_call("if test -e /etc/dropbear/dropbear_rsa_host_key; then :; else dropbearkey -t rsa -s 4096 -f /etc/dropbear/dropbear_rsa_host_key; fi",
+           timeout=180)
+check_call("kill $(cat /var/run/dropbear.pid) || :", timeout=2)
+check_call(('dropbear',), timeout=2)
+
+sys.exit(0)
