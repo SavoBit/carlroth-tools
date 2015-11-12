@@ -16,3 +16,5 @@ default: Dockerfile apt.conf
 
 include ../../../make/rules.mk
 
+eclipse:
+	docker exec -i -t $(DOCKER_CONTAINER_ID) $(HOME)/work/controller/eclipse/java-mars/eclipse/eclipse
