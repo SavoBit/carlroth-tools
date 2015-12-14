@@ -1,0 +1,79 @@
+#!/usr/bin/python
+
+"""push-controller
+"""
+
+import sys, os
+import pexpect
+import subprocess
+from cStringIO import StringIO
+
+bindir = os.path.abspath(os.path.dirname(__file__))
+toolsdir = os.path.dirname(os.path.dirname(bindir))
+sys.path.append(os.path.join(toolsdir, "src/python"))
+
+import ConsoleUtils
+
+host = sys.argv[1]
+switch = sys.argv[2]
+
+BCF1_ADDR = "10.8.67.10"
+BCF2_ADDR = "10.8.67.11"
+
+def push_swi(host):
+    """Copy all of the SWIs from the workspace to the controller.
+
+    NOTE that there's no easy way to update the SWI cache on the controller
+    without restarting it (and triggering a failover).
+    """
+
+    builds = os.path.join(os.environ['SWITCHLIGHT'], 'builds')
+    for root, dirs, files in os.walk(builds):
+        for e in files:
+
+            if not e.endswith('.swi'): continue
+
+            p = os.path.join(root, e)
+            if os.path.islink(p): continue
+
+            if 'PPC' in e:
+                check_ssh(('rm', '-v', '-f', '*PPC*.swi',),
+                          host=host)
+            elif 'AMD64' in e:
+                check_ssh(('rm', '-v', '-f', '*AMD64*.swi',),
+                          host=host)
+
+            ConsoltUtils.check_scp(p, '/usr/share/floodlight/zerotouch',
+                                   host=host, direction=OUT)
+
+sub = ConsoleUtils.ControllerRootSubprocess(host)
+
+if sub.testBatchSsh():
+    print "root ssh ok"
+else:
+    print "root ssh not ok"
+    asub = ConsoleUtils.ControllerAdminSubprocess(host)
+    asub.enableRoot()
+
+##sub.check_scp("/etc/floodlight/hw_platform", "/tmp", direction=ConsoleUtils.IN)
+
+cli = ConsoleUtils.ControllerCliSubprocess(host)
+##cli.check_call(('show', 'version',))
+addr = cli.getSwitchAddress(switch)
+
+ssub = ConsoleUtils.SwitchRecovery2Subprocess(addr)
+if ssub.testBatchSsh():
+    print "switch recovery2 ssh ok"
+else:
+    print "switch recovery2 ssh not ok"
+    scli = ConsoleUtils.SwitchConnectCliSubprocess(host, switch)
+    scli.enableRecovery2()
+
+##scli = ConsoleUtils.SwitchPcliSubprocess(addr)
+##out = scli.check_output(('show', 'tls',))
+##print "output is", out
+
+ssub.check_scp("/etc/os-release", "/tmp/os-release", direction=ConsoleUtils.IN)
+##push_swi(host)
+
+sys.exit(0)
