@@ -1,0 +1,114 @@
+#!/bin/bash
+#
+######################################################################
+#
+# For a loader device:
+#
+# # mkdir -p /etc/dropbear
+# # dropbearkey -t rsa -b 4096 -r /etc/dropbear/dropbear_rsa_host_key
+# # dropbear
+# # sed -i -e 's/root::/root:bs2CN7HjUNy12/' /etc/shadow
+#
+######################################################################
+
+CMD=${0##*/}
+
+set -e
+##set -x
+host=$1; shift
+
+pubkey="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDOKEwudWc+YZc2inn7EI+cytXRgPfH4VzvO7aRRhZ2HhAZVKRoYRVg5qf4KdOKwOKOUVcy3G/zQC++xE+O72m5yLcvncZ4cQoq7PZjKjpxCGUUcwqomSHVs1CH6/cMoPH3lTzuP8jkHV1YjTffedIOsNo3BowJkTMunCMtPuFN8pk0jNfyrYrTZ8oJi3NpuRjvyw/qYzBwLAetf6XobpwRZaY7NAx1uJa/VJA7FDiadHrDEGNmKdXO+jf72y8rHDTUVJ9+FXajfWEe0nqyNsVol8Lya8gQclZmwXUtXPt8ZnoORQCdlVAg14ZAeYeNJdBKNULpZIDs7Ys+BTMH0jIjy0Pqf7UzSPSJM+SmGRlKm/nzUy86jPXiknyyR9vAADU7hVxkCqc7dUHTYmv6uQqnoSFPK9IoMa8JhWTVqPjDYRP01wis79h8X3nnamVbDD+N0FWMzMp2WjKxA/E1u0VH1GB3Xon4yIIB0sCRek99xBu5MRUA+vh3/f62SheHdTTzy6z/8VBiMX1JXvHiBGP9nQ5shcRFA8XNvxbZJWwfm8SzNNQZxkTIDnHr6/A2Bt85t5ZZ2kvFMuml7EJc0KOWfNgIstFBNHPBJaJjdvFEjZikrYe/Jm0KD1daSEx6gd5YTCRYi1xileFp5d7PbrOXKrb7hZyidocI4s7gLA3vhw== Ursus SSH key"
+
+ca="MIIDRDCCAiygAwIBAgIJAN30TJfY2oaLMA0GCSqGSIb3DQEBCwUAMBsxGTAXBgNVBAMTEFNuYWtlT2lsIEluYy4gQ0EwHhcNMTUwODI0MTk0OTI5WhcNMjUwODIxMTk0OTI5WjAbMRkwFwYDVQQDExBTbmFrZU9pbCBJbmMuIENBMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6kY7i0dc7if7hJkUrt6cZ6Z0ag/P/MU4pM0XX51YF2FW86wV40l/kL/7XBZjWwIGii73ptIcJFH9Edr/qqltplcM69N/vzU3z2U0rBLczVnVqBviWEeLoEam3Lga7bGI9VQtZnddGGXqX5SlQmNnfs18hwC2JGiQRTNXjZizbCC4YatBsYUYC+EVq2HlA2G6Bq/sdAOh6oeghd4iAcD55M0BhM3OZtA7Dnzqy8JEb1Sk4Jf7vEhbG2e+u0s1RW7yAjGtaFhuTfMyckFgBoC+YR/vrb3GXMuhUG1A4QDg8VK5rXwgNnN03naCgQo4TsTWpbXi7kLOKns3C6gLOMUlMwIDAQABo4GKMIGHMB0GA1UdDgQWBBQoSXmRfLAfq4nIbnrZLcG2vjA3sDBLBgNVHSMERDBCgBQoSXmRfLAfq4nIbnrZLcG2vjA3sKEfpB0wGzEZMBcGA1UEAxMQU25ha2VPaWwgSW5jLiBDQYIJAN30TJfY2oaLMAwGA1UdEwQFMAMBAf8wCwYDVR0PBAQDAgEGMA0GCSqGSIb3DQEBCwUAA4IBAQCWVRXucc0FL/J8QHIGeDBCGu0JMCOfhs/myrkHjs4wd+wAI/HFnsIj1DuUm3BtFBUL6IOwBt6ImGu3fVUL/sOGdjRmwn6X4igmJIm4EHuAvdhsuifSq2HN0gNWtQoDmz/qHIHyvQ4xHksnyaGwbM7E+YWoUHeSB1JwXOqLVEG6yKIodn/sC1M85jdZ8Q3NuWol7t0cIUiiyDGFnDG6QyhaeW0CmddQ6uUlQjpoFiK7ZLfy1dK99gdmHy50z9hHuBNIYL19Stx38XBDpRLoIfsky/jBN6wIvZ7ks+ph5I2WDJD6hhIicqhqPeT85zPnU5CQGY1uNH1JJTZUMFoc+kGH"
+
+# root password 'bsn' with 'bs' as the salt
+pw="bs2CN7HjUNy12"
+
+SSHOPTS=$SSHOPTS${SSHOPTS+" "}"-oUser=root"
+SSHOPTS=$SSHOPTS${SSHOPTS+" "}"-oUserKnownHostsFile=/dev/null"
+SSHOPTS=$SSHOPTS${SSHOPTS+" "}"-oStrictHostKeyChecking=no"
+
+do_setup_ssh() {
+
+  if ssh $SSHOPTS -oBatchMode=yes $host /bin/true; then
+    return 0
+  fi
+
+  echo "$CMD:$FUNCNAME: pushing SSH config"
+  local key
+  key=$(printf " %q" "$pubkey")
+  cmd="IFS=; set -e; set -x; mkdir -p /root/.ssh; chmod 0700 /root/.ssh; touch /root/.ssh/authorized_keys; chmod 0600 /root/.ssh/authorized_keys; echo $key >> /root/.ssh/authorized_keys"
+  ssh $SSHOPTS $host -- /bin/sh -c "$cmd"
+
+  echo "$CMD:$FUNCNAME: testing SSH config"
+  ssh $SSHOPTS -oBatchMode=yes $host /bin/true
+  SSHOPTS=$SSHOPTS${SSHOPTS+" "}"-oBatchMode=yes"
+}
+
+do_scp() {
+  local l dst
+  while test $# -gt 1; do
+    l=$l${l:+" "}$1
+    shift
+  done
+  dst=$1; shift
+    
+  echo "$CMD:$FUNCNAME: sending $l --> $dst"
+  scp $SSHOPTS ${l} ${host}:${dst}
+}
+
+do_pcli() {
+  local cmd pcli_cmd
+  pcli_cmd=$(printf " %q" "$@")
+  cmd=$(printf " %q" pcli --force-admin -m config -c "$pcli_cmd")
+
+  echo "$CMD:$FUNCNAME: invoking pcli \"$@\""
+  ssh $SSHOPTS -t ${host} -- "$cmd"
+}
+
+do_setup_ssh
+
+push_loader() {
+  pydir=/usr/lib/python2.7/site-packages
+  push_ztn
+}
+
+push_sl() {
+  pydir=/usr/lib/python2.7/dist-packages
+
+  push_ztn
+
+  srcdir=$SWITCHLIGHT/components/all/cli/src
+  dstdir=$pydir/pcli
+  do_scp ${srcdir}/error.py ${dstdir}/error.py
+
+  srcdir=$SWITCHLIGHT/components/all/cli/src/desc/version001
+  dstdir=$pydirpcli/desc/version001
+  do_scp ${srcdir}/tls.py ${dstdir}/tls.py
+
+  srcdir=$SWITCHLIGHT/components/all/ztn/src/bin
+  dstdir=/bin
+  do_scp ${srcdir}/ztn-tls-provision ${dstdir}/ztn-tls-provision
+
+  srcdir=$SWITCHLIGHT/components/all/slrest/src/python/slrest/api/v1
+  dstdir=$pydir/slrest/api/v1
+  do_scp ${srcdir}/*.py ${dstdir}/.
+
+  srcdir=$SWITCHLIGHT/components/all/slrest/src/python/slrest/base
+  dstdir=$pydir/slrest/base
+  do_scp ${srcdir}/*.py ${dstdir}/.
+
+  return 0
+}
+
+push_ztn() {
+  srcdir=$SWITCHLIGHT/components/all/ztn/src/python/ztn
+  dstdir=$pydir/ztn
+  do_scp ${srcdir}/*.py ${dstdir}/.
+}
+
+##do_pcli tls ca inline der-base64 "$ca"
+##do_pcli show tls
+
+##push_loader
+push_sl
