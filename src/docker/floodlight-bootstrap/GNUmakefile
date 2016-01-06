@@ -95,10 +95,17 @@ BOOTSTRAP_PACKAGES		+= \
   python-thrift \
   # THIS LINE INTENTIONALLY LEFT BLANK
 
+# support for Java 8
+BOOTSTRAP_PACKAGES		+= \
+  openjdk-8-jdk \
+  # THIS LINE INTENTIONALLY LEFT BLANK
+
 bootstrap: bootstrap-floodlight
 
 bootstrap-floodlight:
+	docker exec $(DOCKER_CONTAINER_ID) sudo add-apt-repository --yes ppa:openjdk-r/ppa
 	docker exec $(DOCKER_CONTAINER_ID) sudo apt-get update
 	docker exec $(DOCKER_CONTAINER_ID) sudo DEBIAN_FRONTEND=noninteractive apt-get -y install $(BOOTSTRAP_PACKAGES)
 	docker exec $(DOCKER_CONTAINER_ID) sudo pip install --upgrade $(BOOTSTRAP_PIP_PACKAGES)
+	docker exec $(DOCKER_CONTAINER_ID) sudo update-java-alternatives -s java-1.8.0-openjdk-amd64
 	docker commit $(DOCKER_CONTAINER_ID) $(DOCKER_USER)/$(DOCKER_PROFILE):bootstrap

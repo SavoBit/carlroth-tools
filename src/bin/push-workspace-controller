@@ -1,0 +1,141 @@
+#!/usr/bin/python
+
+"""push-worksspace-controller
+"""
+
+import sys, os, pwd, shutil
+import pexpect
+import subprocess
+import time
+import pexpect
+import tempfile
+
+from cStringIO import StringIO
+
+bindir = os.path.abspath(os.path.dirname(__file__))
+toolsdir = os.path.dirname(os.path.dirname(bindir))
+sys.path.append(os.path.join(toolsdir, "src/python"))
+
+import ConsoleUtils
+
+switch = sys.argv[1]
+
+CONTROLLER_SRCDIR = "%s/work/controller" % os.environ['HOME']
+# subdirs 'floodlight', 'bvs'
+
+TLS_CA_PATH = ("%s/floodlight/core/src/test/resources/tlstest/ca.crt"
+               % (CONTROLLER_SRCDIR,))
+TLS_CAKEY_PATH = ("%s/floodlight/core/src/test/resources/tlstest/ca.key"
+                  % (CONTROLLER_SRCDIR,))
+
+ConsoleUtils.ControllerWorkspaceCliPopen.RUNCLI = ("%s/bvs/runcli"
+                                                   % (CONTROLLER_SRCDIR,))
+
+cli = ConsoleUtils.ControllerWorkspaceCliSubprocess()
+addr = cli.getSwitchAddress(switch)
+print "switch", switch, "address is", addr
+
+ssub = ConsoleUtils.SwitchRecovery2Subprocess(addr)
+if ssub.testBatchSsh():
+    print "switch recovery2 ssh ok"
+else:
+    print "switch recovery2 ssh not ok"
+    scli = ConsoleUtils.WorkspaceSwitchConnectCliSubprocess(switch)
+    scli.enableRecovery2()
+
+##scli = ConsoleUtils.SwitchPcliSubprocess(addr)
+##out = scli.check_output(('show', 'tls',))
+##print "output is", out
+
+##ssub.check_scp("/etc/os-release", "/tmp/os-release", direction=ConsoleUtils.IN)
+##with open("/tmp/os-release") as fd:
+##    sys.stdout.write(fd.read())
+
+##push_swi(host)
+
+def cpsec_provision(switch):
+
+    sts = cli.getCpsecStatus()
+    mode = sts['detail']['State Current mode']
+    print "current CPSEC mode", mode
+    if mode != 'provision':
+        print "Starting fabric CPSEC provision"
+        cli.check_call(('secure', 'control', 'plane', 'provision', 'force',))
+
+    # look for CSR MAC-WITH-DASHES.switch.cluster
+    switchData = cli.getSwitch(switch)
+    mac = switchData['Switch MAC Address']
+
+    def _getCsr():
+        csr = mac.replace(':', '-') + '.switch.cluster'
+        sts = cli.getCpsecStatus()
+        for e in sts.get('Csrs', []):
+            if e['Name'] == csr:
+                return csr
+        for e in sts.get('Csr', []):
+            if e['Name'] == csr:
+                return csr
+        return None
+
+    now = time.time()
+    future = now + 300
+    while True:
+        now = time.time()
+        if now > future: break
+        if _getCsr() is not None: break
+        print "waiting for CSR..."
+        time.sleep(5.0)
+
+    csr = _getCsr()
+    if csr is None:
+        raise ValueError("timed out waiting for CSR")
+
+    print "Found switch CSR"
+
+    src = "csr://%s" % (csr,)
+    with cli.copyOut(src) as ctx:
+        print "output file is", ctx.dst
+
+        try:
+            workdir = tempfile.mkdtemp(prefix='tls-', suffix='.d')
+            os.chmod(workdir, 0755)
+
+            rndPath = os.path.join(workdir, "dot.rnd")
+            srlPath = os.path.join(workdir, "ca.srl")
+            crtPath = os.path.join(workdir, "switch.crt")
+
+            # sign the CSR
+            cmd = ('openssl', 'x509', '-req',
+                   '-in', ctx.dst,
+                   '-CA', TLS_CA_PATH,
+                   '-CAkey', TLS_CAKEY_PATH,
+                   '-passin', 'pass:1234',
+                   '-CAcreateserial', '-CAserial', srlPath,
+                   '-out', crtPath,)
+
+            env = {}
+            env.update(os.environ)
+            env['RANDFILE'] = rndPath
+
+            subprocess.check_call(cmd, env=env)
+            os.chmod(crtPath, 0644)
+            print "switch CRT is", crtPath
+
+            # transfer the CERT back in
+            srcArg = "scp://bsn@localhost:%s" % crtPath
+            dstArg = "cert://%s.switch.cluster" % mac.replace(':', '-')
+            cli.copy(srcArg, dstArg)
+
+        finally:
+            shutil.rmtree(workdir)
+
+    # wait for locked-down state
+
+##cpsec_provision(switch)
+
+data = cli.getSwitch(switch)
+print data
+
+cpsec_provision(switch)
+
+sys.exit(0)
