@@ -18,7 +18,6 @@ CREATE_OPTS	= \
 VOLUME_OPTS	= \
   --volume /Users \
   --volume /Volumes/data \
-  --volume /Volumes/spool \
   # THIS LINE INTENTIONALLY LEFT BLANK
 
 default:
