@@ -36,25 +36,29 @@ esac
 #
 ##############################
 
-case "$(uname -s)" in
-  Darwin)
-    cache=${HOME}/Library/Caches
-  ;;
-  Linux)
-    if grep -q docker /proc/self/cgroup; then
-      if test -d "${HOME}/Library/Caches"; then
-        cache=${HOME}/Library/Caches
+if test "$cache"; then
+  :
+else
+  case "$(uname -s)" in
+    Darwin)
+      cache=${HOME}/Library/Caches
+    ;;
+    Linux)
+      if grep -q docker /proc/self/cgroup; then
+        if test -d "${HOME}/Library/Caches"; then
+          cache=${HOME}/Library/Caches
+        else
+          cache=${XDG_CACHE_HOME-"${HOME}/.cache"}
+        fi
       else
         cache=${XDG_CACHE_HOME-"${HOME}/.cache"}
       fi
-    else
-      cache=${XDG_CACHE_HOME-"${HOME}/.cache"}
-    fi
-  ;;
-  *)
-    cache=${HOME}/tmp
-  ;;
-esac
+    ;;
+    *)
+      cache=${HOME}/tmp
+    ;;
+  esac
+fi
 
 # See
 # http://git.buildroot.net/buildroot/commit/?id=433290761fceb476b095548eec10adf72405e050
@@ -173,7 +177,7 @@ if test ${SSH_AUTH_SOCK+set}; then
   esac
 
   # detect containers
-  cid=$(container-id)
+  cid=$(container-id 2>/dev/null)
   if test "$cid"; then
     asrc=$HOME/.ssh/agent-socket-docker-${cid}
   fi
