@@ -157,7 +157,6 @@ class Bootstrap:
         try:
             subprocess.check_call(cmd)
         except subprocess.CalledProcessError, what:
-            sys.stderr.write(what.output or "")
             self.log.error("scp failed")
             return what.returncode
         os.unlink(profilePath)
@@ -169,8 +168,17 @@ class Bootstrap:
         try:
             subprocess.check_call(cmd)
         except subprocess.CalledProcessError, what:
-            sys.stderr.write(what.output or "")
             self.log.error("scp failed")
+            return what.returncode
+
+        self.log.info("invoking rc.local")
+        cmd = (DOCKER_MACHINE_SSH, '-oUser=root',
+               self.machine,
+               '--', '/bin/sh', '-c', 'IFS=; set -e; set -x; . /var/lib/boot2docker/profile',)
+        try:
+            subprocess.check_call(cmd)
+        except subprocess.CalledProcessError, what:
+            self.log.error("ssh failed")
             return what.returncode
 
         return 0
