@@ -4,7 +4,7 @@
 #
 ######################################################################
 
-DOCKER_PROFILE			= switchlight
+DOCKER_PROFILE			= onlbuilder7
 DOCKER_OS			= opennetworklinux/builder7:1.0
 
 include ../../../make/config.mk
@@ -21,14 +21,14 @@ DOCKER_SHELL			= /bin/docker_shell --verbose --user "$(DOCKER_USER):$(DOCKER_UID
 
 include ../../../make/rules.mk
 
-bootstrap: bootstrap-switchlight
+bootstrap: bootstrap-onlbuilder7
 
 BOOTSTRAP_PACKAGES		= \
   python-dnspython \
   python-pyroute2 \
   # THIS LINE INTENTIONALLY LEFT BLANK
 
-bootstrap-switchlight:
+bootstrap-onlbuilder7:
 	docker exec $(DOCKER_CONTAINER_ID) env DEBIAN_FRONTEND=noninteractive apt-get -y install $(BOOTSTRAP_PACKAGES)
 
 Dockerfile: apt.conf sudoers acng.conf switch-nfs.list
