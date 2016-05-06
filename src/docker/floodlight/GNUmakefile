@@ -12,18 +12,14 @@ include ../../../make/config.mk
 
 -include docker.mk
 
-default: Dockerfile apt.conf
+default: Dockerfile
 
 include ../../../make/rules.mk
 
-apt.conf: $(top_srcdir)/src/docker/lib/apt.conf.in GNUmakefile
-	sed -e 's/@PROFILE@/$(DOCKER_PROFILE)/g' $< > $@
-
-acng.conf: $(top_srcdir)/src/docker/lib/acng.conf.in GNUmakefile
-	sed -e 's/@PROFILE@/$(DOCKER_PROFILE)/g' $< > $@
-
 eclipse:
 	docker exec -i -t $(DOCKER_CONTAINER_ID) env DISPLAY=$(DISPLAY) $(HOME)/work/controller/eclipse/java-mars/eclipse/eclipse
+
+Dockerfile: apt.conf
 
 clean: clean-local
 
