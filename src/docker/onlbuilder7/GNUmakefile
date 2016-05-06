@@ -39,10 +39,10 @@ switch-nfs.list: GNUmakefile
 	cp /dev/null $@
 	echo "deb http://switch-nfs.hw.bigswitch.com/export/apt/ stable main" >> $@
 
-apt.conf: apt.conf.in GNUmakefile
+apt.conf: $(top_srcdir)/src/docker/lib/apt.conf.in GNUmakefile
 	sed -e 's/@PROFILE@/$(DOCKER_PROFILE)/g' $< > $@
 
-acng.conf: acng.conf.in GNUmakefile
+acng.conf: $(top_srcdir)/src/docker/lib/acng.conf.in GNUmakefile
 	sed -e 's/@PROFILE@/$(DOCKER_PROFILE)/g' $< > $@
 
 clean: clean-local
