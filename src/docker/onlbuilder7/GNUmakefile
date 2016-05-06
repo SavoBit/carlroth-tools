@@ -4,10 +4,12 @@
 #
 ######################################################################
 
+top_srcdir			= ../../..
+
 DOCKER_PROFILE			= onlbuilder7
 DOCKER_OS			= opennetworklinux/builder7:1.0
 
-include ../../../make/config.mk
+include $(top_srcdir)/make/config.mk
 
 -include docker.mk
 
@@ -19,7 +21,7 @@ DOCKER_RUN_UID			= root
 DOCKER_SHELL			= /bin/docker_shell --verbose --user "$(DOCKER_USER):$(DOCKER_UID)" -c "bash --login"
 # container UID is root
 
-include ../../../make/rules.mk
+include $(top_srcdir)/make/rules.mk
 
 bootstrap: bootstrap-onlbuilder7
 
@@ -33,11 +35,18 @@ bootstrap-onlbuilder7:
 
 Dockerfile: apt.conf sudoers acng.conf switch-nfs.list
 
-switch-nfs.list:
+switch-nfs.list: GNUmakefile
 	cp /dev/null $@
 	echo "deb http://switch-nfs.hw.bigswitch.com/export/apt/ stable main" >> $@
+
+apt.conf: apt.conf.in GNUmakefile
+	sed -e 's/@PROFILE@/$(DOCKER_PROFILE)/g' $< > $@
+
+acng.conf: acng.conf.in GNUmakefile
+	sed -e 's/@PROFILE@/$(DOCKER_PROFILE)/g' $< > $@
 
 clean: clean-local
 
 clean-local:
-	rm -f switch-nfs.list
+	rm -f switch-nfs.list apt.conf acng.conf
+

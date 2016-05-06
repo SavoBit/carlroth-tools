@@ -1,0 +1,4 @@
+Port: 3142
+LogDir: /home/roth/.cache/docker/@PROFILE@
+CacheDir: /home/roth/.cache/docker/@PROFILE@/apt-cacher-ng
+ForeGround: 1

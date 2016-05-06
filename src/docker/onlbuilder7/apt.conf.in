@@ -1,0 +1,4 @@
+dir::cache "/home/roth/.cache/docker/@PROFILE@/apt/cache";
+dir::state "/home/roth/.cache/docker/@PROFILE@/apt/lib";
+acquire::http::proxy "http://localhost:3142";
+debug::nolocking 1;
