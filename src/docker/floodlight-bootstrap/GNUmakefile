@@ -100,6 +100,16 @@ BOOTSTRAP_PACKAGES		+= \
   openjdk-8-jdk \
   # THIS LINE INTENTIONALLY LEFT BLANK
 
+# support for building thrift
+BOOTSTRAP_PACKAGES		+= \
+  libboost-dev \
+  libssl-dev \
+  # THIS LINE INTENTIONALLY LEFT BLANK
+
+BOOTSTRAP_PIP_PACKAGES		+= \
+  pysmile \
+  # THIS LINE INTENTIONALLY LEFT BLANK
+
 bootstrap: bootstrap-floodlight
 
 bootstrap-floodlight:
