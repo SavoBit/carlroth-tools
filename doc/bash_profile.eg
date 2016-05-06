@@ -84,6 +84,10 @@ esac
 # Do *not* use $TMPDIR on MacOS, since the path
 # is too long to store UNIX domain sockets of any reasonable length
 #
+# NOTE here that there are some permissions shenanigans
+# going on (likely systemd tmpfile/session management)
+# which causes old files in /tmp to be adopted by root
+#
 ##############################
 
 runtime=${XDG_RUNTIME_DIR="/run/user/$(id -u)"}
@@ -91,7 +95,7 @@ if test -d "$runtime"; then
   :
 else
   set dummy /tmp/runtime-$(id -u)-*
-  if test -d "$2"; then
+  if test -d "$2" -a -w "$2"; then
     runtime=$2
   else
     runtime=$(mktemp -d /tmp/runtime-$(id -u)-XXXXXX)
@@ -118,7 +122,7 @@ if test ${SSH_AUTH_SOCK+set}; then
     sshruntime=$runtime
   else
     set dummy /tmp/runtime-$(id -u)-*
-    if test -d "$2"; then
+    if test -d "$2" -a -w "$2"; then
       sshruntime="$2"
     else
       sshruntime=$(mktemp -d /tmp/runtime-$(id -u)-XXXXXX)
