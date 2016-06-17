@@ -7,7 +7,7 @@
 top_srcdir			= ../../..
 
 DOCKER_PROFILE			= onlbuilder7
-DOCKER_OS			= opennetworklinux/builder7:1.1
+DOCKER_OS			= opennetworklinux/builder7:1.2
 
 include $(top_srcdir)/make/config.mk
 
