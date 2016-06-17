@@ -1,0 +1,33 @@
+#!/usr/bin/python
+
+"""track-ssh-cli
+"""
+
+import sys, os
+import glob
+
+bindir = os.path.abspath(os.path.dirname(__file__))
+toolsdir = os.path.dirname(os.path.dirname(bindir))
+sys.path.append(os.path.join(toolsdir, "src/python"))
+
+import ConsoleUtils
+
+args = list(sys.argv[1:])
+switch = args.pop(0)
+
+sub = ConsoleUtils.SwitchRootSubprocess.fromTrack(switch)
+if sub is None:
+   raise SystemExit("cannot find switch")
+Popen = ConsoleUtils.SwitchPcliPopen
+
+if not sub.testBatchSsh():
+   sub.enableRoot()
+
+if args:
+   pipe = Popen(args, host=sub.host, user="root", tty=False, interactive=False)
+   pipe.communicate()
+   sys.exit(pipe.wait())
+else:
+   pipe = Popen(host=sub.host, user="root", tty=True, interactive=True)
+   pipe.communicate()
+   sys.exit(pipe.wait())
