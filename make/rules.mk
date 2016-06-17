@@ -77,7 +77,7 @@ clean-images:
 	    docker rmi -f $$e || : ;\
 	  fi ;\
 	done
-	-docker ps -a --no-trunc | grep $(DOCKER_CONTAINER) | xargs --no-run-if-empty docker rm
+	-docker ps -a --no-trunc | grep $(DOCKER_CONTAINER) | cut -d' ' -f1 | xargs --no-run-if-empty docker rm
 
 create-images: Dockerfile apt.conf sudoers acng.conf
 	docker run \
