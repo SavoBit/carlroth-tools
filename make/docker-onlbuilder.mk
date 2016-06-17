@@ -16,14 +16,17 @@ DOCKER_SHELL			= /bin/docker_shell --verbose --user "$(DOCKER_USER):$(DOCKER_UID
 
 include $(top_srcdir)/make/rules.mk
 
-bootstrap: bootstrap-$(DOCKER_PROFILE)
+bootstrap: bootstrap-local
 
 BOOTSTRAP_PACKAGES		= \
   python-dnspython \
-  python-pyroute2 \
   # THIS LINE INTENTIONALLY LEFT BLANK
 
-bootstrap-$(DOCKER_PROFILE):
+##BOOTSTRAP_PACKAGES		+= \
+##  python-pyroute2 \
+##  # THIS LINE INTENTIONALLY LEFT BLANK
+
+bootstrap-local:
 	docker exec $(DOCKER_CONTAINER_ID) env DEBIAN_FRONTEND=noninteractive apt-get -y install $(BOOTSTRAP_PACKAGES)
 
 Dockerfile: apt.conf sudoers acng.conf switch-nfs.list
