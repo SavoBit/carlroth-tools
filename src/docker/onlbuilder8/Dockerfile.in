@@ -1,0 +1,15 @@
+# build the onlbuilder build environment
+FROM @IMAGE@
+MAINTAINER @MAINTAINER@
+COPY apt.conf /etc/apt/apt.conf.d/98docker-host
+COPY acng.conf /etc/apt-cacher-ng/acng.conf
+
+# Jeff needs to add this to the baseline image
+COPY switch-nfs.list /etc/apt/sources.list.d/switch-nfs.list
+
+ENTRYPOINT ["/bin/docker_shell", "--user", "@USER@:@UID@", "-c", "bash"]
+ENV TERM linux
+
+ENV USER @USER@
+USER @USER@
+ENV HOME @HOME@
