@@ -1,0 +1,49 @@
+#!/usr/bin/python
+
+"""install-switch
+"""
+
+import sys, os
+import glob
+
+bindir = os.path.abspath(os.path.dirname(__file__))
+toolsdir = os.path.dirname(os.path.dirname(bindir))
+sys.path.append(os.path.join(toolsdir, "src/python"))
+
+import ConsoleUtils, TrackUtils
+
+switch = sys.argv[1]
+##url = sys.argv[2]
+
+srcdir = os.environ.get('SWITCHLIGHT')
+srcpat = os.path.join(srcdir, "builds/installer/powerpc/bcf/internal", "*_INSTALLER")
+l = glob.glob(srcpat)
+if not l:
+   raise SystemExit("cannot find an installer")
+p = l[0]
+
+serverAddr = TrackUtils.getDefaultV6Addr()
+switchScope = "eth0"
+
+##url = "http://10.6.0.5/root%s" % p
+url = ("http://[%s%%%s]/root%s"
+       % (serverAddr, switchScope, p,))
+print "found URL", url
+
+sub = ConsoleUtils.SwitchRootSubprocess.fromTrack(switch)
+if sub is None:
+   raise SystemExit("cannot find switch")
+tsub = ConsoleUtils.TrackConsoleSubprocess(switch)
+if sub.testBatchSsh():
+   sub.check_call(('/sbin/reboot',))
+else:
+   tsub.reboot()
+
+tctl = tsub.spawn()
+tsub._waitUboot(tctl)
+tsub._findUbootOnieRescue(tctl)
+tsub._installOnieUrl(tctl, url)
+
+# go ahead and enable root et al while we have a console connection
+tsub._enableRoot(tctl)
+tsub._findLogin(tctl)
