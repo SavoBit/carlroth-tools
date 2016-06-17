@@ -7,6 +7,8 @@ import pexpect
 import re
 import tempfile
 
+import TrackUtils
+
 PUBKEY = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDOKEwudWc+YZc2inn7EI+cytXRgPfH4VzvO7aRRhZ2HhAZVKRoYRVg5qf4KdOKwOKOUVcy3G/zQC++xE+O72m5yLcvncZ4cQoq7PZjKjpxCGUUcwqomSHVs1CH6/cMoPH3lTzuP8jkHV1YjTffedIOsNo3BowJkTMunCMtPuFN8pk0jNfyrYrTZ8oJi3NpuRjvyw/qYzBwLAetf6XobpwRZaY7NAx1uJa/VJA7FDiadHrDEGNmKdXO+jf72y8rHDTUVJ9+FXajfWEe0nqyNsVol8Lya8gQclZmwXUtXPt8ZnoORQCdlVAg14ZAeYeNJdBKNULpZIDs7Ys+BTMH0jIjy0Pqf7UzSPSJM+SmGRlKm/nzUy86jPXiknyyR9vAADU7hVxkCqc7dUHTYmv6uQqnoSFPK9IoMa8JhWTVqPjDYRP01wis79h8X3nnamVbDD+N0FWMzMp2WjKxA/E1u0VH1GB3Xon4yIIB0sCRek99xBu5MRUA+vh3/f62SheHdTTzy6z/8VBiMX1JXvHiBGP9nQ5shcRFA8XNvxbZJWwfm8SzNNQZxkTIDnHr6/A2Bt85t5ZZ2kvFMuml7EJc0KOWfNgIstFBNHPBJaJjdvFEjZikrYe/Jm0KD1daSEx6gd5YTCRYi1xileFp5d7PbrOXKrb7hZyidocI4s7gLA3vhw== Ursus SSH key"
 
 ADMIN_USER = 'admin'
@@ -92,7 +94,7 @@ class SshPopen(PopenBase):
                   '-oUser=%s' % user,
                   '-oStrictHostKeyChecking=no',
                   '-oUserKnownHostsFile=/dev/null',
-                  '-oBatchMode=yes',
+                  '-oConnectTimeout=3',
                   host,]
 
         if ':' in host:
@@ -101,6 +103,14 @@ class SshPopen(PopenBase):
         tty = kwargs.pop('tty', None)
         if tty:
             sshcmd[2:2] = ['-oRequestTTY=force',]
+
+        interactive = kwargs.pop('interactive', False)
+        if interactive:
+            sshcmd[2:2] = ['-oPasswordAuthentication=yes',
+                           '-oChallengeResponseAuthentication=no',
+                           '-oBatchMode=no',]
+        else:
+            sshcmd[2:2] = ['-oBatchMode=yes',]
 
         if cmd:
             sshcmd += ['--',]
@@ -135,6 +145,7 @@ class SshSubprocessBase(SubprocessBase):
 
         Set 'direction' to IN or OUT.
         Set 'host' to the remote source or dest host.
+        Set 'quote' to False to disable e.g. pattern quoting
         Set *args to the file arguments, with the final source/dest
         as the last argument.
         """
@@ -146,16 +157,22 @@ class SshSubprocessBase(SubprocessBase):
         if ':' in host:
             host = '[' + host + ']'
 
+        _q = kwargs.pop('quote', True)
+        if _q:
+            qf = quote
+        else:
+            qf = lambda x: x
+
         args = list(args)
         scpargs = []
         if _dir == IN:
             while len(args) > 1:
-                scpargs.append(host + ':' + quote(args.pop(0)))
-            scpargs.append(quote(args.pop(0)))
+                scpargs.append(host + ':' + qf(args.pop(0)))
+            scpargs.append(qf(args.pop(0)))
         elif _dir == OUT:
             while len(args) > 1:
-                scpargs.append(quote(args.pop(0)))
-            scpargs.append(host + ':' + quote(args.pop(0)))
+                scpargs.append(qf(args.pop(0)))
+            scpargs.append(host + ':' + qf(args.pop(0)))
         else:
             raise ValueError("invalid direction")
 
@@ -170,27 +187,32 @@ class SshSubprocessBase(SubprocessBase):
         args = (scpcmd,) + tuple(args)
         subprocess.check_call(scpcmd)
 
-class ControllerRootSubprocess(SshSubprocessBase):
-
-    popen_klass = SshPopen
-
-    def __init__(self, host):
-        self.host = host
-        self.user = 'root'
-
     def testBatchSsh(self):
         """Test that root SSH login is enabled.
 
         Returns 0 if successful.
         """
         try:
-            code = self.check_call(('/bin/true',))
+            code = self.check_call(('/bin/true',),
+                                   tty=False, interactive=False)
         except subprocess.CalledProcessError, what:
             code = what.returncode
         return True if code == 0 else False
 
+class ControllerRootSubprocess(SshSubprocessBase):
+
+    popen_klass = SshPopen
+    USER = 'root'
+
+    def __init__(self, host, user=None):
+        self.host = host
+        self.user = user or self.USER
+
 class ControllerCliPopen(SshPopen):
     """Batch-mode access to controller cli commands."""
+
+    USER = ADMIN_USER
+    PASS = ADMIN_PASS
 
     @classmethod
     def wrap_params(cls, *args, **kwargs):
@@ -202,12 +224,12 @@ class ControllerCliPopen(SshPopen):
         else:
             cmd = kwargs.pop('args', None)
 
-        clicmd = ['sudo', '-u', ADMIN_USER,
+        clicmd = ['sudo', '-u', cls.USER,
                   '--',
                   'floodlight-cli',
                   '-I', '-X',
-                  '-u', ADMIN_USER,
-                  '-p', ADMIN_PASS,]
+                  '-u', cls.USER,
+                  '-p', cls.PASS,]
 
         mode = kwargs.pop('mode', None)
         if mode is not None:
@@ -448,11 +470,13 @@ class ControllerCliSubprocess(ControllerCliMixin,
     def check_output(self, *args, **kwargs):
         return super(SshSubprocessBase, self).check_output(*args, host=self.host, user=self.user, mode=self.mode, **kwargs)
 
-class ControllerAdminPopen(PopenBase):
+class ControllerAdminPopen(SshPopen):
     """Interactive access to admin cli.
 
     Batch commands are not accepted here.
     """
+
+    USER = ADMIN_USER
 
     @classmethod
     def wrap_params(cls, *args, **kwargs):
@@ -464,29 +488,17 @@ class ControllerAdminPopen(PopenBase):
         else:
             cmd = kwargs.pop('args', None)
 
-        if cmd:
+        kwargs.setdefault('tty', True)
+        kwargs.setdefault('interactive', True)
+        kwargs.setdefault('user', cls.USER)
+        if cmd and kwargs['user'] == ADMIN_USER:
             raise ValueError("command not accepted for admin shell")
 
-        host = kwargs.pop('host')
-
-        cmd = ('ssh',
-               '-t',
-               '-F/dev/null',
-               '-oUser=%s' % ADMIN_USER,
-               '-oUserKnownHostsFile=/dev/null',
-               '-oStrictHostKeyChecking=no',
-               '-oBatchMode=no',
-               '-oPasswordAuthentication=yes',
-               '-oChallengeResponseAuthentication=no',
-               host,)
-
-        if ':' in host:
-            sshcmd[2:2] = ['-6',]
-
-        args = (cmd,) + tuple(args)
-        return super(ControllerAdminPopen, cls).wrap_params(*args, **kwargs)
+        return super(ControllerAdminPopen, cls).wrap_params(cmd, *args, **kwargs)
 
 class ControllerAdminSubprocess(SshSubprocessBase):
+
+    PASS = ADMIN_PASS
 
     popen_klass = ControllerAdminPopen
 
@@ -512,9 +524,9 @@ class ControllerAdminSubprocess(SshSubprocessBase):
         ctl = self.spawn()
         i = ctl.expect(["password: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=10)
         if i != 0:
-            raise pexepect.ExceptionPexpect("cannot get password prompt")
+            raise pexpect.ExceptionPexpect("cannot get password prompt")
 
-        ctl.sendline(ADMIN_PASS)
+        ctl.sendline(self.PASS)
         i = ctl.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF], timeout=10)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
@@ -778,6 +790,8 @@ class SwitchRecovery2Subprocess(SshSubprocessBase):
 class SwitchPcliPopen(SshPopen):
     """Batch-mode access to switch pcli commands."""
 
+    USER = "recovery2"
+
     @classmethod
     def wrap_params(cls, *args, **kwargs):
 
@@ -798,7 +812,7 @@ class SwitchPcliPopen(SshPopen):
             # allow for (empty) interactive Cli
             pass
         elif isinstance(cmd, basestring):
-            clicmd += ['-c', cmd,]
+            clicmd += ['-c', quote(cmd),]
         else:
             qcmd = [quote(w) for w in cmd]
             clicmd += ['-c', '''" "'''.join(qcmd),]
@@ -811,9 +825,9 @@ class SwitchPcliSubprocess(SshSubprocessBase):
 
     popen_klass = SwitchPcliPopen
 
-    def __init__(self, host, mode=None):
+    def __init__(self, host, user=None, mode=None):
         self.host = host
-        self.user = 'recovery2'
+        self.user = user or self.popen_klass.USER
         self.mode = mode
 
     def call(self, *args, **kwargs):
@@ -972,3 +986,363 @@ class WorkspaceSwitchConnectCliSubprocess(SwitchConnectMixin,
         sw = pexpect.spawn(cmd, list(rest), *args, logfile=sys.stdout, **kwargs)
 
         return sw
+
+class SwitchInternalSshPopen(ControllerAdminPopen):
+    USER = "root"
+    PASS = "bsn"
+
+class SwitchInternalSshSubprocess(SshSubprocessBase):
+
+    popen_klass = SwitchInternalSshPopen
+
+    def __init__(self, host, user=None):
+        self.host = host
+        self.user = user or self.popen_klass.USER
+
+    def spawn(self, **kwargs):
+        args, popenKwargs = self.popen_klass.wrap_params(host=self.host)
+        if popenKwargs:
+            raise ValueError("invalid keyword arguments from subprocess: %s" % popenKwargs)
+        args = list(args)
+        kwargs = dict(kwargs)
+        if args:
+            cmd = args.pop(0)
+        else:
+            cmd = kwargs.pop('args')
+        if isinstance(cmd, basestring):
+            cmd, rest = cmd, []
+        else:
+            cmd, rest = cmd[0], cmd[1:]
+        return pexpect.spawn(cmd, list(rest), *args, logfile=sys.stdout, **kwargs)
+
+    def enableRoot(self):
+        """Enable root login via the admin login."""
+
+        ctl = self.spawn()
+        i = ctl.expect(["password: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=10)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get password prompt")
+
+        ctl.sendline(self.popen_klass.PASS)
+        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=10)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get bash prompt")
+
+        ctl.sendline("exec bash -e")
+        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get bash prompt")
+
+        for cmd in (('stty', '-echo', 'rows', '10000', 'cols', '999',),
+                    ('mkdir', '-p', '/root/.ssh',),
+                    ('chmod', '0700', '/root/.ssh',),
+                    ('touch', '/root/.ssh/authorized_keys',),
+                    ('chmod', '0600', '/root/.ssh/authorized_keys',),
+                    ('set', 'dummy', PUBKEY,),
+                    ('shift',),
+                    ('echo', '"$*"', ">>/root/.ssh/authorized_keys",),
+                ):
+            ctl.sendline(" ".join(cmd))
+            i = ctl.expect(["[#] $", "[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+            if i != 0:
+                raise pexpect.ExceptionPexpect("command failed: %d" % i)
+
+        return 0
+
+class TrackConsolePopen(PopenBase):
+
+    USER = "admin"
+
+ADDR_RE = re.compile("IPv4 Address[(]es[)]: [0-9.]+")
+
+class TrackConsoleSubprocess(SubprocessBase):
+
+    popen_klass = TrackConsolePopen
+
+    def __init__(self, host):
+        self.host = host
+
+    def spawn(self, **kwargs):
+        """Connect to the switch admin cli."""
+
+        cliCmd = ('track', 'console', self.host,)
+        args, popenKwargs = self.popen_klass.wrap_params(cliCmd)
+        if popenKwargs:
+            raise ValueError("invalid keyword arguments from subprocess: %s" % popenKwargs)
+        args = list(args)
+        kwargs = dict(kwargs)
+        if args:
+            cmd = args.pop(0)
+        else:
+            cmd = kwargs.pop('args')
+        if isinstance(cmd, basestring):
+            cmd, rest = cmd, []
+        else:
+            cmd, rest = cmd[0], cmd[1:]
+        sw = pexpect.spawn(cmd, list(rest), *args, logfile=sys.stdout, **kwargs)
+
+        return sw
+
+    def _findLogin(self, sp):
+        """back out iteratively to get to a login prompt"""
+
+        for cnt in range(5):
+
+            sp.sendline("")
+
+            i = sp.expect(["login: $", "[#>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+            if i == 0: break
+
+            sp.send(chr(0x4))
+
+        sp.sendline("")
+
+        i = sp.expect(["login: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get admin prompt")
+
+        return True
+
+    def _dhcp(self, sp):
+
+        # query the interface setup
+        sp.sendline("show interface ma1")
+
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get admin prompt")
+
+        m = ADDR_RE.search(sp.before)
+        if m: return
+
+        sp.sendline("config")
+
+        i = sp.expect(["[(]config[)][#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get config prompt")
+
+        sp.sendline("interface ma1 ip-address dhcp")
+
+        i = sp.expect(["[(]config[)][#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=10)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get config prompt")
+
+        sp.sendline("exit")
+
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=10)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get enable prompt")
+
+    def _enableRoot(self, sp):
+
+        sp.sendline("")
+
+        i = sp.expect(["login: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get admin prompt")
+
+        sp.sendline(self.popen_klass.USER)
+
+        i = sp.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=10)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get admin prompt")
+
+        # always to go debug admin
+        sp.sendline("debug admin")
+
+        i = sp.expect(["Switching to debug admin mode", pexpect.TIMEOUT, pexpect.EOF,], timeout=10)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get debug admin banner")
+
+        i = sp.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF], timeout=10)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get debug admin prompt")
+
+        sp.sendline("enable")
+
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get enable prompt")
+
+        self._dhcp(sp)
+
+        sp.sendline("debug bash")
+
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get bash prompt")
+
+        sp.sendline("exec bash -e")
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get bash prompt")
+
+        for cmd in (('stty', '-echo', 'rows', '10000', 'cols', '999',),
+                    ('mkdir', '-p', '/root/.ssh',),
+                    ('chmod', '0700', '/root/.ssh',),
+                    ('touch', '/root/.ssh/authorized_keys',),
+                    ('chmod', '0600', '/root/.ssh/authorized_keys',),
+                    ('set', 'dummy', PUBKEY,),
+                    ('shift',),
+                    ('echo', '"$*"', ">>/root/.ssh/authorized_keys",),
+                ):
+            sp.sendline(" ".join(cmd))
+            i = sp.expect(["[#] $", "[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+            if i != 0:
+                raise pexpect.ExceptionPexpect("command failed: %d" % i)
+
+    def enableRoot(self):
+        """Enable root login via the admin login
+
+        Along the way, enable the management interface.
+        """
+        ctl = self.spawn()
+
+        if not self._findLogin(ctl):
+            raise pexpect.ExceptionPexpect("cannot get login prompt")
+
+        self._enableRoot(ctl)
+
+        # log back out
+        self._findLogin(ctl)
+
+        return 0
+
+    def reboot(self):
+        """Power-cycle the box.
+
+        Use this if a normal 'reboot' from the root account is not possible.
+        """
+        cliCmd = ('track', 'power', self.host, 'reboot',)
+        subprocess.check_call(cliCmd)
+
+    def _waitUboot(self, sp):
+        """Wait for the uboot prompt.
+
+        Assume that the system was just rebooted.
+        """
+
+        i = sp.expect(["Hit any key to stop autoboot: ", pexpect.TIMEOUT, pexpect.EOF,], timeout=180)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get uboot prompt")
+
+        sp.sendline("")
+
+        i = sp.expect(["> $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get uboot prompt")
+
+    def _findUbootOnieRescue(self, sp):
+        """Boot to the ONIE rescue prompt."""
+
+        sp.sendline("")
+
+        i = sp.expect(["> $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get uboot prompt")
+
+        sp.sendline("run onie_rescue")
+
+        i = sp.expect(["Please press Enter", pexpect.TIMEOUT, pexpect.EOF,], timeout=180)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get ONIE prompt")
+
+        sp.sendline("")
+
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get ONIE prompt")
+
+    def _installOnieUrl(self, sp, url):
+
+        sp.sendline("")
+
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get ONIE prompt")
+
+        sp.sendline("read url")
+        sp.sendline(url)
+
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get ONIE prompt")
+
+        sp.sendline("install_url $url")
+
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=5)
+        if i == 0:
+            raise pexpect.ExceptionPexpect("cannot start download")
+
+        # wait for the login prompt
+
+        i = sp.expect(["login: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=300)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("URL install failed")
+
+class SwitchRootSubprocess(SshSubprocessBase):
+
+    popen_klass = SwitchInternalSshPopen
+
+    def __init__(self, host, user=None):
+        user = user or self.popen_klass.USER
+        SshSubprocessBase.__init__(self, host, user=user)
+
+    def spawn(self, **kwargs):
+        args, popenKwargs = self.popen_klass.wrap_params(host=self.host)
+        if popenKwargs:
+            raise ValueError("invalid keyword arguments from subprocess: %s" % popenKwargs)
+        args = list(args)
+        kwargs = dict(kwargs)
+        if args:
+            cmd = args.pop(0)
+        else:
+            cmd = kwargs.pop('args')
+        if isinstance(cmd, basestring):
+            cmd, rest = cmd, []
+        else:
+            cmd, rest = cmd[0], cmd[1:]
+        return pexpect.spawn(cmd, list(rest), *args, logfile=sys.stdout, **kwargs)
+
+    def enableRoot(self):
+        """Enable root login via the admin login."""
+
+        ctl = self.spawn()
+        i = ctl.expect(["password: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=10)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get password prompt")
+
+        ctl.sendline(self.popen_klass.PASS)
+        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=10)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get bash prompt")
+
+        ctl.sendline("exec sudo bash -e")
+        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get bash prompt")
+
+        for cmd in (('stty', '-echo', 'rows', '10000', 'cols', '999',),
+                    ('mkdir', '-p', '/root/.ssh',),
+                    ('chmod', '0700', '/root/.ssh',),
+                    ('touch', '/root/.ssh/authorized_keys',),
+                    ('chmod', '0600', '/root/.ssh/authorized_keys',),
+                    ('set', 'dummy', PUBKEY,),
+                    ('shift',),
+                    ('echo', '"$*"', ">>/root/.ssh/authorized_keys",),
+                ):
+            ctl.sendline(" ".join(cmd))
+            i = ctl.expect(["[#] $", "[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+            if i != 0:
+                raise pexpect.ExceptionPexpect("command failed: %d" % i)
+
+        return 0
+
+    @classmethod
+    def fromTrack(cls, switch):
+        bt = TrackUtils.BigTrack()
+        addr = bt.getSwitchV6Address(switch)
+        if addr is None: return None
+        intf = TrackUtils.getDefaultV6Intf()
+        addr = addr + '%' + intf
+        return cls(addr)
