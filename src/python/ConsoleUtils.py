@@ -800,7 +800,7 @@ class SwitchPcliPopen(SshPopen):
         if args:
             cmd, args = args[0], args[1:]
         else:
-            cmd = kwargs.pop('args')
+            cmd = kwargs.pop('args', [])
 
         clicmd = ['pcli', '--force-admin',]
 
