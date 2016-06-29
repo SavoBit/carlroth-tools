@@ -24,10 +24,13 @@ if not sub.testBatchSsh():
    sub.enableRoot()
 
 if args:
-   pipe = Popen(args, host=sub.host, user="root", tty=False, interactive=False)
+   pipe = Popen(args, host=sub.host, user="root",
+                tty=False, interactive=False, mode='config')
    pipe.communicate()
    sys.exit(pipe.wait())
 else:
-   pipe = Popen(host=sub.host, user="root", tty=True, interactive=True)
+   pipe = Popen(host=sub.host, user="root",
+                tty=True, interactive=True,
+                mode='config')
    pipe.communicate()
    sys.exit(pipe.wait())
