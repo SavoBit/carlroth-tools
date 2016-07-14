@@ -1,0 +1,28 @@
+#!/bin/sh
+#
+##############################
+#
+# qemu-ifup DEV
+#
+# See
+# http://www.linux-kvm.org/page/Networking
+#
+##############################
+
+set -e
+set -x
+
+bindir=${0%/*}
+
+exec 1>$bindir/qemu-ifup.log 2>&1
+
+echo "args are $@"
+printenv
+ifconfig
+
+ip link set $1 up
+brctl addif br0 $1
+
+ifconfig
+
+exit 0
