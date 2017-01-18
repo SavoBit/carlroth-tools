@@ -6,6 +6,7 @@ import subprocess
 import pexpect
 import re
 import tempfile
+import socket
 
 import TrackUtils
 
@@ -13,6 +14,11 @@ PUBKEY = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDOKEwudWc+YZc2inn7EI+cytXRgPfH4V
 
 ADMIN_USER = 'admin'
 ADMIN_PASS = 'adminadmin'
+
+TIMEOUT_BOOT = 180
+TIMEOUT_LONG = 30
+TIMEOUT_SHORT = 5
+TIMEOUT_LOGIN = 10
 
 def quote(s):
     """Quote a string so that it passes transparently through a shell."""
@@ -89,12 +95,13 @@ class SshPopen(PopenBase):
         host = kwargs.pop('host')
         user = kwargs.pop('user')
 
+        topt = "-oConnectTimeout=%d" % TIMEOUT_SHORT
         sshcmd = ['ssh',
                   '-F/dev/null',
                   '-oUser=%s' % user,
                   '-oStrictHostKeyChecking=no',
                   '-oUserKnownHostsFile=/dev/null',
-                  '-oConnectTimeout=3',
+                  topt,
                   host,]
 
         if ':' in host:
@@ -111,6 +118,10 @@ class SshPopen(PopenBase):
                            '-oBatchMode=no',]
         else:
             sshcmd[2:2] = ['-oBatchMode=yes',]
+
+        agent = kwargs.pop('agent', True)
+        if not agent:
+            sshcmd[2:2] = ['-oPubkeyAuthentication=no',]
 
         if cmd:
             sshcmd += ['--',]
@@ -153,9 +164,13 @@ class SshSubprocessBase(SubprocessBase):
         kwargs = dict(kwargs)
         _dir = kwargs.pop('direction')
 
+        args = list(args)
+        scpargs = []
+
         host = self.host
         if ':' in host:
             host = '[' + host + ']'
+            scpargs.append('-6')
 
         _q = kwargs.pop('quote', True)
         if _q:
@@ -163,8 +178,6 @@ class SshSubprocessBase(SubprocessBase):
         else:
             qf = lambda x: x
 
-        args = list(args)
-        scpargs = []
         if _dir == IN:
             while len(args) > 1:
                 scpargs.append(host + ':' + qf(args.pop(0)))
@@ -377,10 +390,27 @@ class ControllerCliMixin:
             lines = []
         if lines:
             addr = lines[0].strip().split()[3].partition('/')[0]
-            return addr
+            if addr != '0.0.0.0':
+                l, s, r = addr.partition('%')
+                if s:
+                    addr = "%s%%%s" % (l, TrackUtils.getDefaultV6Intf(),)
+                return addr
 
         # else use the link local address
-        return self.getSwitch(switch).get('IP Address', None)
+        rec = self.getSwitch(switch)
+        addr = rec.get('IP Address', None)
+        if addr is not None:
+            l, s, r = addr.partition('%')
+            if s:
+                addr = "%s%%%s" % (l, TrackUtils.getDefaultV6Intf(),)
+            return addr
+
+        # else, use the mac address
+        mac = rec.get('Switch MAC Address', None)
+        if mac is not None:
+            return TrackUtils.getV6AddrFromMac(mac)
+
+        return None
 
     def getSwitch(self, switch):
 
@@ -413,16 +443,16 @@ class ControllerCliMixin:
 
         sp = self.spawn()
 
-        i = sp.expect(["# $", pexpect.TIMEOUT, pexpect.EOF], timeout=3)
+        i = sp.expect(["# $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise ValueError("expect failed: %s" % sp.before)
 
         sp.sendline("copy %s %s" % (src, dst,))
 
-        i = sp.expect(["password: $", "# $", pexpect.TIMEOUT, pexpect.EOF], timeout=3)
+        i = sp.expect(["password: $", "# $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_SHORT)
         if i == 0:
             sp.sendline("bsn")
-            i = sp.expect(["# $", pexpect.TIMEOUT, pexpect.EOF], timeout=3)
+            i = sp.expect(["# $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_SHORT)
             if i != 0:
                 raise ValueError("expect failed: %s" % sp.before)
         elif i != 1:
@@ -431,20 +461,20 @@ class ControllerCliMixin:
         # exit to "enable"
         sp.sendline("exit")
 
-        i = sp.expect(["# $", pexpect.TIMEOUT, pexpect.EOF], timeout=3)
+        i = sp.expect(["# $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise ValueError("expect failed: %s" % sp.before)
 
         # exit to normal
         sp.sendline("exit")
 
-        i = sp.expect(["> $", pexpect.TIMEOUT, pexpect.EOF], timeout=3)
+        i = sp.expect(["> $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise ValueError("expect failed: %s" % sp.before)
 
         sp.sendline("exit")
 
-        i = sp.expect([pexpect.EOF, pexpect.TIMEOUT], timeout=3)
+        i = sp.expect([pexpect.EOF, pexpect.TIMEOUT], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise ValueError("expect failed: %s" % sp.before)
 
@@ -498,16 +528,22 @@ class ControllerAdminPopen(SshPopen):
 
 class ControllerAdminSubprocess(SshSubprocessBase):
 
+    USER = ADMIN_USER
     PASS = ADMIN_PASS
 
     popen_klass = ControllerAdminPopen
 
+    def __init__(self, host, user=USER):
+        super(ControllerAdminSubprocess, self).__init__(host, user)
+
     def spawn(self, **kwargs):
-        args, popenKwargs = self.popen_klass.wrap_params(host=self.host)
+        kwargs = dict(kwargs)
+        agent = kwargs.pop('agent', True)
+        args, popenKwargs = self.popen_klass.wrap_params(host=self.host,
+                                                         agent=agent)
         if popenKwargs:
             raise ValueError("invalid keyword arguments from subprocess: %s" % popenKwargs)
         args = list(args)
-        kwargs = dict(kwargs)
         if args:
             cmd = args.pop(0)
         else:
@@ -521,23 +557,23 @@ class ControllerAdminSubprocess(SshSubprocessBase):
     def enableRoot(self):
         """Enable root login via the admin login."""
 
-        ctl = self.spawn()
-        i = ctl.expect(["password: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=10)
+        ctl = self.spawn(agent=False)
+        i = ctl.expect(["password: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_LOGIN)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get password prompt")
 
         ctl.sendline(self.PASS)
-        i = ctl.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF], timeout=10)
+        i = ctl.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_LOGIN)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
         ctl.sendline("debug bash")
-        i = ctl.expect(["[$] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = ctl.expect(["[$] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
         ctl.sendline("exec sudo bash -e")
-        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
@@ -551,7 +587,7 @@ class ControllerAdminSubprocess(SshSubprocessBase):
                     ('echo', '"$*"', ">>/root/.ssh/authorized_keys",),
                 ):
             ctl.sendline(" ".join(cmd))
-            i = ctl.expect(["[#] $", "[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+            i = ctl.expect(["[#] $", "[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
             if i != 0:
                 raise pexpect.ExceptionPexpect("command failed: %d" % i)
 
@@ -601,7 +637,9 @@ class SwitchConnectMixin:
         """Connect to the controller cli, then to the switch Cli."""
 
         cliCmd = ('connect', 'switch', self.switch,)
-        args, popenKwargs = self.popen_klass.wrap_params(cliCmd, host=self.host, switch=self.switch)
+        args, popenKwargs = self.popen_klass.wrap_params(cliCmd,
+                                                         host=self.host, user='root',
+                                                         switch=self.switch)
         if popenKwargs:
             raise ValueError("invalid keyword arguments from subprocess: %s" % popenKwargs)
         args = list(args)
@@ -632,14 +670,14 @@ class SwitchConnectMixin:
             cmd = kwargs.pop('args')
 
         sw = self.spawn()
-        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise subprocess.CalledProcessError(i,
-                                                ('switch', 'connect', self.switch,),
+                                                ('connect', 'switch', self.switch,),
                                                 sw.before)
 
         sw.sendline("debug admin")
-        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=30)
+        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_LONG)
         if i != 0:
             raise subprocess.CalledProcessError(i, ('debug', 'admin',), sw.before)
 
@@ -647,12 +685,12 @@ class SwitchConnectMixin:
             sw.sendline(cmd)
         else:
             sw.sendline(" ".join(cmd))
-        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=30)
+        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_LONG)
         if i != 0:
             raise subprocess.CalledProcessError(i, cmd, sw.before)
 
         sw.sendline('exit')
-        i = sw.expect([pexpect.EOF, "[>] $", pexpect.TIMEOUT,], timeout=3)
+        i = sw.expect([pexpect.EOF, "[>] $", pexpect.TIMEOUT,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise subprocess.CalledProcessError(i, ('exit',), sw.before)
 
@@ -674,14 +712,14 @@ class SwitchConnectMixin:
             cmd = kwargs.pop('args')
 
         sw = self.spawn()
-        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise subprocess.CalledProcessError(i,
-                                                ('switch', 'connect', self.switch,),
+                                                ('connect', 'switch', self.switch,),
                                                 sw.before)
 
         sw.sendline("debug admin")
-        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=30)
+        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_LONG)
         if i != 0:
             raise subprocess.CalledProcessError(i, ('debug', 'admin',), sw.before)
 
@@ -689,13 +727,13 @@ class SwitchConnectMixin:
             sw.sendline(cmd)
         else:
             sw.sendline(" ".join(cmd))
-        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=30)
+        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_LONG)
         if i != 0:
             raise subprocess.CalledProcessError(i, cmd, sw.before)
         buf = sw.before
 
         sw.sendline('exit')
-        i = sw.expect([pexpect.EOF, "[>] $", pexpect.TIMEOUT,], timeout=3)
+        i = sw.expect([pexpect.EOF, "[>] $", pexpect.TIMEOUT,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise subprocess.CalledProcessError(i, ('exit',), buf+sw.before)
 
@@ -705,41 +743,43 @@ class SwitchConnectMixin:
         """Enable recovery (root) login via SSH."""
 
         sw = self.spawn()
-        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
+            sys.stderr.write("i %d\n" % i)
+            sys.stderr.write("before %s\n" % sw.before)
             raise subprocess.CalledProcessError(i,
-                                                ('switch', 'connect', self.switch,),
+                                                ('connect', 'switch', self.switch,),
                                                 sw.before)
 
         sw.sendline("debug admin")
-        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sw.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise subprocess.CalledProcessError(i, ('debug', 'admin',), sw.before)
 
         sw.sendline("enable")
-        i = sw.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sw.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise subprocess.CalledProcessError(i, ('enable',), sw.before)
 
         # get ourselves into a bash environment where we can detect errors
 
         sw.sendline("debug bash")
-        i = sw.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sw.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise subprocess.CalledProcessError(i, ('debug', 'bash',), sw.before)
 
         sw.sendline("exec bash -e")
-        i = sw.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sw.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise subprocess.CalledProcessError(i, ('exec', 'bash', '-e',), sw.before)
 
         sw.sendline("PS1='BASH# '")
-        i = sw.expect(["BASH[#] $", "[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sw.expect(["BASH[#] $", "[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise subprocess.CalledProcessError(i, ('PS1=...',), sw.before)
 
         sw.sendline("echo hello")
-        i = sw.expect(["BASH[#] $", "[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sw.expect(["BASH[#] $", "[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise subprocess.CalledProcessError(i, ('echo', 'hello',), sw.before)
 
@@ -759,7 +799,7 @@ class SwitchConnectMixin:
                     ('echo', '"$*"', ">>/var/run/recovery2/.ssh/authorized_keys",),
                 ):
             sw.sendline(" ".join(cmd))
-            i = sw.expect(["BASH[#] $", "[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+            i = sw.expect(["BASH[#] $", "[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
             if i != 0:
                 raise subprocess.CalledProcessError(i, ('...',), sw.before)
 
@@ -802,7 +842,7 @@ class SwitchPcliPopen(SshPopen):
         else:
             cmd = kwargs.pop('args', [])
 
-        clicmd = ['pcli', '--force-admin',]
+        clicmd = ['pcli', '--debug',]
 
         mode = kwargs.pop('mode', None)
         if mode is not None:
@@ -1000,11 +1040,13 @@ class SwitchInternalSshSubprocess(SshSubprocessBase):
         self.user = user or self.popen_klass.USER
 
     def spawn(self, **kwargs):
-        args, popenKwargs = self.popen_klass.wrap_params(host=self.host)
+        kwargs = dict(kwargs)
+        agent = kwargs.pop('agent', True)
+        args, popenKwargs = self.popen_klass.wrap_params(host=self.host,
+                                                         agent=agent)
         if popenKwargs:
             raise ValueError("invalid keyword arguments from subprocess: %s" % popenKwargs)
         args = list(args)
-        kwargs = dict(kwargs)
         if args:
             cmd = args.pop(0)
         else:
@@ -1018,18 +1060,18 @@ class SwitchInternalSshSubprocess(SshSubprocessBase):
     def enableRoot(self):
         """Enable root login via the admin login."""
 
-        ctl = self.spawn()
-        i = ctl.expect(["password: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=10)
+        ctl = self.spawn(agent=False)
+        i = ctl.expect(["password: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_LOGIN)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get password prompt")
 
         ctl.sendline(self.popen_klass.PASS)
-        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=10)
+        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_LOGIN)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
         ctl.sendline("exec bash -e")
-        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
@@ -1043,7 +1085,7 @@ class SwitchInternalSshSubprocess(SshSubprocessBase):
                     ('echo', '"$*"', ">>/root/.ssh/authorized_keys",),
                 ):
             ctl.sendline(" ".join(cmd))
-            i = ctl.expect(["[#] $", "[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+            i = ctl.expect(["[#] $", "[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
             if i != 0:
                 raise pexpect.ExceptionPexpect("command failed: %d" % i)
 
@@ -1053,6 +1095,9 @@ class TrackConsolePopen(PopenBase):
 
     USER = "admin"
 
+    ##USER = "root"
+    ##PASS = "onl"
+
 ADDR_RE = re.compile("IPv4 Address[(]es[)]: [0-9.]+")
 
 class TrackConsoleSubprocess(SubprocessBase):
@@ -1061,6 +1106,7 @@ class TrackConsoleSubprocess(SubprocessBase):
 
     def __init__(self, host):
         self.host = host
+        self.loginBanner = None
 
     def spawn(self, **kwargs):
         """Connect to the switch admin cli."""
@@ -1090,16 +1136,18 @@ class TrackConsoleSubprocess(SubprocessBase):
 
             sp.sendline("")
 
-            i = sp.expect(["login: $", "[#>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+            i = sp.expect(["login: $", "[#>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
             if i == 0: break
 
             sp.send(chr(0x4))
 
         sp.sendline("")
 
-        i = sp.expect(["login: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sp.expect(["login: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get admin prompt")
+
+        self.loginBanner = sp.before
 
         return True
 
@@ -1108,7 +1156,7 @@ class TrackConsoleSubprocess(SubprocessBase):
         # query the interface setup
         sp.sendline("show interface ma1")
 
-        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get admin prompt")
 
@@ -1117,50 +1165,50 @@ class TrackConsoleSubprocess(SubprocessBase):
 
         sp.sendline("config")
 
-        i = sp.expect(["[(]config[)][#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=3)
+        i = sp.expect(["[(]config[)][#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get config prompt")
 
         sp.sendline("interface ma1 ip-address dhcp")
 
-        i = sp.expect(["[(]config[)][#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=10)
+        i = sp.expect(["[(]config[)][#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_LOGIN)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get config prompt")
 
         sp.sendline("exit")
 
-        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=10)
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_LOGIN)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get enable prompt")
 
-    def _enableRoot(self, sp):
+    def _enableSwlRoot(self, sp):
 
         sp.sendline("")
 
-        i = sp.expect(["login: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sp.expect(["login: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get admin prompt")
 
         sp.sendline(self.popen_klass.USER)
 
-        i = sp.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=10)
+        i = sp.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_LOGIN)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get admin prompt")
 
         # always to go debug admin
         sp.sendline("debug admin")
 
-        i = sp.expect(["Switching to debug admin mode", pexpect.TIMEOUT, pexpect.EOF,], timeout=10)
+        i = sp.expect(["Switching to debug admin mode", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_LOGIN)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get debug admin banner")
 
-        i = sp.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF], timeout=10)
+        i = sp.expect(["[>] $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_LOGIN)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get debug admin prompt")
 
         sp.sendline("enable")
 
-        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=3)
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get enable prompt")
 
@@ -1168,12 +1216,12 @@ class TrackConsoleSubprocess(SubprocessBase):
 
         sp.sendline("debug bash")
 
-        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
         sp.sendline("exec bash -e")
-        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
@@ -1187,7 +1235,45 @@ class TrackConsoleSubprocess(SubprocessBase):
                     ('echo', '"$*"', ">>/root/.ssh/authorized_keys",),
                 ):
             sp.sendline(" ".join(cmd))
-            i = sp.expect(["[#] $", "[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+            i = sp.expect(["[#] $", "[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
+            if i != 0:
+                raise pexpect.ExceptionPexpect("command failed: %d" % i)
+
+    def _enableOnlRoot(self, sp):
+
+        sp.sendline("")
+
+        i = sp.expect(["login: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get admin prompt")
+
+        sp.sendline(self.popen_klass.USER)
+
+        i = sp.expect(["[pP]assword: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_LOGIN)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get password prompt")
+
+        sp.sendline(self.popen_klass.PASS)
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_LOGIN)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get bash prompt")
+
+        sp.sendline("exec bash -e")
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
+        if i != 0:
+            raise pexpect.ExceptionPexpect("cannot get bash prompt")
+
+        for cmd in (('stty', '-echo', 'rows', '10000', 'cols', '999',),
+                    ('mkdir', '-p', '/root/.ssh',),
+                    ('chmod', '0700', '/root/.ssh',),
+                    ('touch', '/root/.ssh/authorized_keys',),
+                    ('chmod', '0600', '/root/.ssh/authorized_keys',),
+                    ('set', 'dummy', PUBKEY,),
+                    ('shift',),
+                    ('echo', '"$*"', ">>/root/.ssh/authorized_keys",),
+                ):
+            sp.sendline(" ".join(cmd))
+            i = sp.expect(["[#] $", "[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
             if i != 0:
                 raise pexpect.ExceptionPexpect("command failed: %d" % i)
 
@@ -1201,7 +1287,19 @@ class TrackConsoleSubprocess(SubprocessBase):
         if not self._findLogin(ctl):
             raise pexpect.ExceptionPexpect("cannot get login prompt")
 
-        self._enableRoot(ctl)
+        if 'SWL' in self.loginBanner:
+            self.popen_klass.USER = 'admin'
+            self._enableSlRoot(ctl)
+        elif 'ONL' in self.loginBanner:
+            try:
+                u, self.popen_class.USER = self.popen_klass.USER, 'root'
+                p, self.popen_klass.PASS = self.popen_klass.PASS, 'onl'
+                self._enableOnlRoot(ctl)
+            finally:
+                self.popen_klass.USER = u
+                self.popen_klass.PASS = p
+        else:
+            raise pexpect.ExceptionPexpect("invalid login banner")
 
         # log back out
         self._findLogin(ctl)
@@ -1222,13 +1320,13 @@ class TrackConsoleSubprocess(SubprocessBase):
         Assume that the system was just rebooted.
         """
 
-        i = sp.expect(["Hit any key to stop autoboot: ", pexpect.TIMEOUT, pexpect.EOF,], timeout=180)
+        i = sp.expect(["Hit any key to stop autoboot: ", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_BOOT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get uboot prompt")
 
         sp.sendline("")
 
-        i = sp.expect(["> $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sp.expect(["> $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get uboot prompt")
 
@@ -1237,19 +1335,19 @@ class TrackConsoleSubprocess(SubprocessBase):
 
         sp.sendline("")
 
-        i = sp.expect(["> $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sp.expect(["> $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get uboot prompt")
 
         sp.sendline("run onie_rescue")
 
-        i = sp.expect(["Please press Enter", pexpect.TIMEOUT, pexpect.EOF,], timeout=180)
+        i = sp.expect(["Please press Enter", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_BOOT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get ONIE prompt")
 
         sp.sendline("")
 
-        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get ONIE prompt")
 
@@ -1257,26 +1355,26 @@ class TrackConsoleSubprocess(SubprocessBase):
 
         sp.sendline("")
 
-        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get ONIE prompt")
 
         sp.sendline("read url")
         sp.sendline(url)
 
-        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get ONIE prompt")
 
         sp.sendline("install_url $url")
 
-        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=5)
+        i = sp.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i == 0:
             raise pexpect.ExceptionPexpect("cannot start download")
 
         # wait for the login prompt
 
-        i = sp.expect(["login: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=300)
+        i = sp.expect(["login: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_LONG0)
         if i != 0:
             raise pexpect.ExceptionPexpect("URL install failed")
 
@@ -1289,7 +1387,10 @@ class SwitchRootSubprocess(SshSubprocessBase):
         SshSubprocessBase.__init__(self, host, user=user)
 
     def spawn(self, **kwargs):
-        args, popenKwargs = self.popen_klass.wrap_params(host=self.host)
+        kwargs = dict(kwargs)
+        agent = kwargs.pop('agent', False)
+        args, popenKwargs = self.popen_klass.wrap_params(host=self.host,
+                                                         agent=agent)
         if popenKwargs:
             raise ValueError("invalid keyword arguments from subprocess: %s" % popenKwargs)
         args = list(args)
@@ -1307,18 +1408,18 @@ class SwitchRootSubprocess(SshSubprocessBase):
     def enableRoot(self):
         """Enable root login via the admin login."""
 
-        ctl = self.spawn()
-        i = ctl.expect(["password: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=10)
+        ctl = self.spawn(agent=False)
+        i = ctl.expect(["password: $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_LOGIN)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get password prompt")
 
         ctl.sendline(self.popen_klass.PASS)
-        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=10)
+        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF], timeout=TIMEOUT_LOGIN)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
         ctl.sendline("exec sudo bash -e")
-        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+        i = ctl.expect(["[#] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
         if i != 0:
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
@@ -1332,7 +1433,7 @@ class SwitchRootSubprocess(SshSubprocessBase):
                     ('echo', '"$*"', ">>/root/.ssh/authorized_keys",),
                 ):
             ctl.sendline(" ".join(cmd))
-            i = ctl.expect(["[#] $", "[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=3)
+            i = ctl.expect(["[#] $", "[>] $", pexpect.TIMEOUT, pexpect.EOF,], timeout=TIMEOUT_SHORT)
             if i != 0:
                 raise pexpect.ExceptionPexpect("command failed: %d" % i)
 
