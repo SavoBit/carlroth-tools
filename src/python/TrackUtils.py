@@ -82,3 +82,13 @@ def getDefaultV6Addr():
             addrInt = pton(addr)
             if addrInt & localMask == localMask:
                 return addr
+
+def getV6AddrFromMac(mac, intf=None):
+    """See ztn.MdnsDiscovery.Server6.zone()."""
+    macBytes = mac.split(':')
+    macBytes = [int(x, 16) for x in macBytes]
+    macBytes[0] ^= 0x02
+    intf = intf or getDefaultV6Intf()
+    macArgs = macBytes + [intf,]
+    return ("fe80::%02x%02x:%02xff:fe%02x:%02x%02x%%%s"
+            % tuple(macArgs))
