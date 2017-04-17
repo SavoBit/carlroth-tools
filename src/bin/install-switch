@@ -15,8 +15,18 @@ import ConsoleUtils, TrackUtils
 switch = sys.argv[1]
 ##url = sys.argv[2]
 
-srcdir = os.environ.get('SWITCHLIGHT')
-srcpat = os.path.join(srcdir, "builds/installer/powerpc/bcf/internal", "*_INSTALLER")
+isOnl = False
+isSwl = True
+
+if isSwl:
+   srcdir = os.environ.get('SWITCHLIGHT')
+   srcpat = os.path.join(srcdir, "builds/installer/powerpc/bcf/internal", "*_INSTALLER")
+if isOnl:
+   srcdir = os.environ.get('ONL')
+   srcpat = os.path.join(srcdir, "builds/powerpc/installer/swi/builds", "*_INSTALLER")
+   ##srcdir = os.environ.get('ONL')
+   ##srcpat = os.path.join(srcdir, "builds/powerpc/installer/installed/builds", "*_INSTALLER")
+
 l = glob.glob(srcpat)
 if not l:
    raise SystemExit("cannot find an installer")
@@ -45,5 +55,10 @@ tsub._findUbootOnieRescue(tctl)
 tsub._installOnieUrl(tctl, url)
 
 # go ahead and enable root et al while we have a console connection
-tsub._enableRoot(tctl)
+if isSwl:
+   tsub._enableSwlRoot(tctl)
+if isOnl:
+   tsub.popen_klass.USER = 'root'
+   tsub.popen_klass.PASS = 'onl'
+   tsub._enableOnlRoot(tctl)
 tsub._findLogin(tctl)
