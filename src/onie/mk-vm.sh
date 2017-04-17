@@ -7,8 +7,14 @@
 bindir=$(dirname $0)
 bindir=$(cd $bindir && pwd)
 
-MEM=1024
-DISK="$PWD/onie-x86-demo.qcow"
+MEM=2048
+
+##DISK="$PWD/onie-x86-demo.qcow"
+### Use this for ONL
+
+DISK="$PWD/z_bs3240_template.qcow2"
+# Use this for SWL and switchlight
+
 SNAP="$PWD/vda-snap.qcow"
 IMG="$PWD/vda.img"
 
@@ -91,7 +97,7 @@ sudo /usr/bin/kvm -m $MEM \
     -netdev tap,id=roth0,script="$IFUP",downscript="no" \
     -device virtio-net-pci,netdev=roth0,mac=$MAC,bus=pci.0,addr=0x3 \
     -nographic -echr 1 \
-    -serial mon:telnet:localhost:9000,server,wait \
+    -serial mon:telnet:localhost:${KVM_PORT},server,wait \
     -drive file=$IMG,media=disk,if=virtio,index=0 > vm.out 2>&1 &
 pid=$!
 
@@ -100,11 +106,11 @@ pid=$!
 
 sleep 1
 reset
-script -c "telnet localhost 9000" -a -f -q vm.out
+script -c "telnet localhost ${KVM_PORT}" -a -f -q vm.out
 reset
 
 if ps -o pid= -p $pid 1>/dev/null 2>&1; then
-    echo "Reconnect to monitor with: telnet localhost 9000"
+    echo "Reconnect to monitor with: telnet localhost ${KVM_PORT}"
     echo "Kill vm with: sudo kill $pid"
 fi
 echo "See logs in vm.out"
