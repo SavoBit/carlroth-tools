@@ -37,6 +37,46 @@ def quote(s):
             q += c
     return q
 
+def quotePcli(s, quote=""):
+    """Pcli quoting rules are a bit different."""
+
+    oq = quote
+    q = ""
+    for c in s:
+
+        if not oq and c in """'""":
+            oq = '''"'''
+            q += c
+            continue
+        if oq == '''"''' and c in """'""":
+            q += c
+            continue
+        if c in """'""":
+            q += "\\"
+            q += c
+            continue
+
+        if not oq and c in '''"''':
+            oq = """'"""
+            q += c
+            continue
+        if oq == """'""" and c in '''"''':
+            q += c
+            continue
+        if c in '''"''':
+            q += "\\"
+            q += c
+            continue
+
+        if not oq and c in " ":
+            oq = '''"'''
+            q += c
+            continue
+
+        q += c
+
+    return oq + q + oq
+
 class PopenBase(subprocess.Popen):
 
     @classmethod
@@ -364,6 +404,9 @@ class CopyOutContext(object):
 
         uname = pwd.getpwuid(os.getuid()).pw_name
         subprocess.check_call(('sudo', 'chown', '-v', uname, self.dst,))
+
+        # HURR https://bigswitch.atlassian.net/browse/SWL-3613
+        # See also $SWL/packages/base/all/pcli/startup-config.init
         os.chmod(self.dst, 0644)
 
         return self
@@ -578,6 +621,11 @@ class ControllerAdminSubprocess(SshSubprocessBase):
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
         for cmd in (('stty', '-echo', 'rows', '10000', 'cols', '999',),
+
+                    ('chmod', '0755', '/root',),
+                    # hm, this was a recent change, appears to be a
+                    # security vuln.
+
                     ('mkdir', '-p', '/root/.ssh',),
                     ('chmod', '0700', '/root/.ssh',),
                     ('touch', '/root/.ssh/authorized_keys',),
@@ -842,7 +890,7 @@ class SwitchPcliPopen(SshPopen):
         else:
             cmd = kwargs.pop('args', [])
 
-        clicmd = ['pcli', '--debug',]
+        clicmd = ['pcli', '--debug', '-u', 'admin',]
 
         mode = kwargs.pop('mode', None)
         if mode is not None:
@@ -1076,6 +1124,11 @@ class SwitchInternalSshSubprocess(SshSubprocessBase):
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
         for cmd in (('stty', '-echo', 'rows', '10000', 'cols', '999',),
+
+                    ('chmod', '0755', '/root',),
+                    # hm, this was a recent change, appears to be a
+                    # security vuln.
+
                     ('mkdir', '-p', '/root/.ssh',),
                     ('chmod', '0700', '/root/.ssh',),
                     ('touch', '/root/.ssh/authorized_keys',),
@@ -1226,6 +1279,11 @@ class TrackConsoleSubprocess(SubprocessBase):
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
         for cmd in (('stty', '-echo', 'rows', '10000', 'cols', '999',),
+
+                    ('chmod', '0755', '/root',),
+                    # hm, this was a recent change, appears to be a
+                    # security vuln.
+
                     ('mkdir', '-p', '/root/.ssh',),
                     ('chmod', '0700', '/root/.ssh',),
                     ('touch', '/root/.ssh/authorized_keys',),
@@ -1264,6 +1322,11 @@ class TrackConsoleSubprocess(SubprocessBase):
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
         for cmd in (('stty', '-echo', 'rows', '10000', 'cols', '999',),
+
+                    ('chmod', '0755', '/root',),
+                    # hm, this was a recent change, appears to be a
+                    # security vuln.
+
                     ('mkdir', '-p', '/root/.ssh',),
                     ('chmod', '0700', '/root/.ssh',),
                     ('touch', '/root/.ssh/authorized_keys',),
@@ -1424,6 +1487,11 @@ class SwitchRootSubprocess(SshSubprocessBase):
             raise pexpect.ExceptionPexpect("cannot get bash prompt")
 
         for cmd in (('stty', '-echo', 'rows', '10000', 'cols', '999',),
+
+                    ('chmod', '0755', '/root',),
+                    # hm, this was a recent change, appears to be a
+                    # security vuln.
+
                     ('mkdir', '-p', '/root/.ssh',),
                     ('chmod', '0700', '/root/.ssh',),
                     ('touch', '/root/.ssh/authorized_keys',),
