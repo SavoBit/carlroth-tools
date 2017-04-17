@@ -1,0 +1,49 @@
+#!/usr/bin/python
+
+"""switch-scp
+"""
+
+import sys, os
+import glob
+import time
+
+bindir = os.path.abspath(os.path.dirname(__file__))
+toolsdir = os.path.dirname(os.path.dirname(bindir))
+sys.path.append(os.path.join(toolsdir, "src/python"))
+
+import ConsoleUtils, TrackUtils
+
+switch = sys.argv[1]
+
+if switch == "qemu":
+   switch = "fe80::5054:ff:fe9b:57a7"
+
+if ':' in switch:
+   addr = "%s%%%s" % (switch, TrackUtils.getDefaultV6Intf(),)
+   sub = ConsoleUtils.SwitchRootSubprocess(addr, user='root')
+elif '.' in switch:
+   sub = ConsoleUtils.SwitchRootSubprocess(switch, user='root')
+else:
+   sub = ConsoleUtils.SwitchRootSubprocess.fromTrack(switch)
+if sub is None:
+   raise SystemExit("cannot find switch")
+
+if sub.testBatchSsh():
+    print "root ssh ok"
+else:
+    print "root ssh not ok"
+
+    ##tsub = ConsoleUtils.TrackConsoleSubprocess(switch)
+    ##tsub.enableRoot()
+
+    sub.enableRoot()
+
+    if not sub.testBatchSsh():
+        raise SystemExit("cannot enable root")
+
+args = sys.argv[2:]
+dst = args.pop(-1)
+for src in args:
+   sub.check_scp(src, dst,
+                 host=switch, user="root",
+                 direction=ConsoleUtils.OUT, quote=False)
