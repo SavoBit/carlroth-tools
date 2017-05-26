@@ -131,11 +131,17 @@ def cpsec_provision(switch):
 
     # wait for locked-down state
 
-##cpsec_provision(switch)
+def pushfiles():
+    srcdir = os.path.join(os.environ['SWITCHLIGHT'], "components/all/cli/src/desc/version001")
+    destdir = os.path.join(os.environ['SWITCHLIGHT'], "/usr/lib/python2.7/dist-packages/pcli/desc/version001")
+    ssub.check_scp(os.path.join(srcdir, "tls.py"),
+                   os.path.join(destdir, "tls.py"),
+                   direction=ConsoleUtils.OUT)
 
 data = cli.getSwitch(switch)
 print data
 
 cpsec_provision(switch)
+##pushfiles()
 
 sys.exit(0)
