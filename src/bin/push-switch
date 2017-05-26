@@ -5,16 +5,26 @@
 
 import sys, os
 import glob
+import time
 
 bindir = os.path.abspath(os.path.dirname(__file__))
 toolsdir = os.path.dirname(os.path.dirname(bindir))
 sys.path.append(os.path.join(toolsdir, "src/python"))
 
-import ConsoleUtils
+import ConsoleUtils, TrackUtils
 
 switch = sys.argv[1]
 
-sub = ConsoleUtils.SwitchRootSubprocess.fromTrack(switch)
+if switch == "qemu":
+   switch = "fe80::5054:ff:fe9b:57a7"
+
+if ':' in switch:
+   addr = "%s%%%s" % (switch, TrackUtils.getDefaultV6Intf(),)
+   sub = ConsoleUtils.SwitchRootSubprocess(addr, user='root')
+elif '.' in switch:
+   sub = ConsoleUtils.SwitchRootSubprocess(switch, user='root')
+else:
+   sub = ConsoleUtils.SwitchRootSubprocess.fromTrack(switch)
 if sub is None:
    raise SystemExit("cannot find switch")
 
@@ -31,42 +41,60 @@ else:
     if not sub.testBatchSsh():
         raise SystemExit("cannot enable root")
 
-srcdir = os.environ.get('SWITCHLIGHT')
+srcdir = os.environ.get('SWL')
 pydir = "/usr/lib/python2.7/dist-packages"
-srcpat = os.path.join(srcdir, "components/all/slrest/src/python/slrest/base/*.py")
-dstdir = os.path.join(pydir, "slrest/base/.")
-args = glob.glob(srcpat) + [dstdir,]
-sub.check_scp(*args,
+
+src = os.path.join(srcdir, "packages/base/all/slrest/src/bin/slrest.py")
+dst = "/usr/bin/slrest"
+sub.check_scp(src, dst,
               host=switch, user="root",
               direction=ConsoleUtils.OUT, quote=False)
+sub.check_call(('chmod', '+x', "/usr/bin/slrest",))
 
-srcpat = os.path.join(srcdir, "components/all/slrest/src/python/slrest/api/v1/*.py")
-dstdir = os.path.join(pydir, "slrest/api/v1/.")
-args = glob.glob(srcpat) + [dstdir,]
-sub.check_scp(*args,
-              host=switch, user="root",
-              direction=ConsoleUtils.OUT, quote=False)
+def do_py(src, dst):
+    srcpat = os.path.join(srcdir, src, "*.py")
+    dstdir = os.path.join(pydir, dst, ".")
+    dstpat = os.path.join(pydir, dst, "*.pyc")
+    args = glob.glob(srcpat) + [dstdir,]
+    sub.check_scp(*args,
+                  direction=ConsoleUtils.OUT, quote=False)
+    sub.check_call(('rm', '-v', '-f', dstpat,),)
 
-srcpat = os.path.join(srcdir, "components/all/slconfig/src/python/slrest/api/v1_config/*.py")
-dstdir = os.path.join(pydir, "slrest/api/v1_config/.")
-args = glob.glob(srcpat) + [dstdir,]
-sub.check_scp(*args,
-              host=switch, user="root",
-              direction=ConsoleUtils.OUT, quote=False)
+do_py("packages/base/all/slrest/src/python/slrest/base",
+      "slrest/base")
+do_py("packages/base/all/slrest/src/python/slrest/api/v1",
+      "slrest/api/v1")
+do_py("packages/base/all/slconfig/src/python/slrest/api/v1_status",
+      "slrest/api/v1_status")
+do_py("packages/base/all/slconfig/src/python/slrest/api/v1_config",
+      "slrest/api/v1_config")
 
-dstpath = os.path.join(pydir, "slrest/base", "*.pyc")
-sub.check_call(('rm', '-vf', dstpath,))
+swldir = os.path.join(srcdir, "packages/base/all/slconfig/src/python/swl")
+for subdir in os.listdir(swldir):
+   swlsrc = os.path.join(swldir, subdir, "__init__.py")
+   src = os.path.join("packages/base/all/slconfig/src/python/swl", subdir)
+   dst = os.path.join("swl", subdir)
+   if os.path.exists(swlsrc):
+      do_py(src, dst)
 
-dstpath = os.path.join(pydir, "slrest/api/v1", "*.pyc")
-sub.check_call(('rm', '-vf', dstpath,))
+do_py("packages/base/all/pcli/builds/src",
+      "pcli")
+do_py("packages/base/all/pcli/builds/src/desc/version001",
+      "pcli/desc/version001")
 
-dstpath = os.path.join(pydir, "slrest/api/v1_config", "*.pyc")
-sub.check_call(('rm', '-vf', dstpath,))
+do_py("packages/base/all/ztn/src/python/ztn",
+      "ztn")
+
+##srcdir = "/home/roth/work/switch/cherrypy"
+##do_py("cherrypy/wsgiserver",
+##      "cherrypy/wsgiserver")
 
 ##sub.check_call(('service', 'slrest', 'stop',))
 ##sub.check_call(('service', 'slrest', 'start',))
 
-psub = ConsoleUtils.SwitchPcliSubprocess(sub.host, user='root')
-psub.call("show version")
+##psub = ConsoleUtils.SwitchPcliSubprocess(sub.host, user='root')
+##time.sleep(3.0)
+##psub.call("show version")
+##sub.check_call(('slrest', 'help',))
 
 sys.exit(0)
