@@ -8,25 +8,35 @@ import pexpect
 import subprocess
 from cStringIO import StringIO
 
+import glob
+
 bindir = os.path.abspath(os.path.dirname(__file__))
 toolsdir = os.path.dirname(os.path.dirname(bindir))
 sys.path.append(os.path.join(toolsdir, "src/python"))
 
 import ConsoleUtils
 
-host = sys.argv[1]
-switch = sys.argv[2]
+args = list(sys.argv[1:])
+host = args.pop(0)
+if args:
+    switch = args.pop(0)
+else:
+    switch = None
 
-BCF1_ADDR = "10.8.67.10"
-BCF2_ADDR = "10.8.67.11"
+srcdir = os.environ.get('SWL')
+pydir = "/usr/lib/python2.7/dist-packages"
 
-def push_swi(host):
+product = "bcf"
+##product = "bmf"
+
+def push_switchlight_swi(host):
     """Copy all of the SWIs from the workspace to the controller.
 
     NOTE that there's no easy way to update the SWI cache on the controller
     without restarting it (and triggering a failover).
     """
 
+    sub = ConsoleUtils.ControllerRootSubprocess(host)
     builds = os.path.join(os.environ['SWITCHLIGHT'], 'builds')
     for root, dirs, files in os.walk(builds):
         for e in files:
@@ -37,14 +47,41 @@ def push_swi(host):
             if os.path.islink(p): continue
 
             if 'PPC' in e:
-                check_ssh(('rm', '-v', '-f', '*PPC*.swi',),
-                          host=host)
+                sub.check_ssh(('rm', '-v', '-f', '*PPC*.swi',),)
             elif 'AMD64' in e:
-                check_ssh(('rm', '-v', '-f', '*AMD64*.swi',),
-                          host=host)
+                sub.check_ssh(('rm', '-v', '-f', '*AMD64*.swi',),)
 
-            ConsoltUtils.check_scp(p, '/usr/share/floodlight/zerotouch',
-                                   host=host, direction=OUT)
+            sub.check_scp(p, '/usr/share/floodlight/zerotouch',
+                          direction=ConsoleUtils.OUT)
+
+def push_swl_swi(host):
+
+    builds = "%s/builds/%s/internal/all" % (os.environ['SWL'], product)
+    dl = []
+    for root, dirs, files in os.walk(builds):
+        for e in files:
+
+            if not e.endswith('.deb'): continue
+
+            p = os.path.join(root, e)
+            if os.path.islink(p): continue
+            dl.append(p)
+
+    if not dl:
+        raise ValueError("cannot find SWL deb")
+    if len(dl) > 1:
+        raise ValueError("multiple SWL debs")
+
+    sub = ConsoleUtils.ControllerRootSubprocess(host)
+    sub.check_scp(p, "/tmp/swl.deb",
+                  direction=ConsoleUtils.OUT)
+    sub.check_call(('dpkg', '-i', '/tmp/swl.deb',),)
+    try:
+        sub.check_call(('service', 'floodlight', 'stop',),)
+    except subprocess.CalledProcessError:
+        pass
+    sub.check_call(('service', 'floodlight', 'start',),)
+    sub.check_call(('rm', '-v', '/tmp/swl.deb',),)
 
 sub = ConsoleUtils.ControllerRootSubprocess(host)
 
@@ -59,21 +96,59 @@ else:
 
 cli = ConsoleUtils.ControllerCliSubprocess(host)
 ##cli.check_call(('show', 'version',))
-addr = cli.getSwitchAddress(switch)
 
-ssub = ConsoleUtils.SwitchRecovery2Subprocess(addr)
-if ssub.testBatchSsh():
-    print "switch recovery2 ssh ok"
+if switch is not None:
+    addr = cli.getSwitchAddress(switch)
+    print "switch address is", addr
+
+    ssub = ConsoleUtils.SwitchRecovery2Subprocess(addr)
+    if ssub.testBatchSsh():
+        print "switch recovery2 ssh ok"
+    else:
+        print "switch recovery2 ssh not ok"
+        scli = ConsoleUtils.SwitchConnectCliSubprocess(host, switch)
+        scli.enableRecovery2()
+
+    ##scli = ConsoleUtils.SwitchPcliSubprocess(addr)
+    ##out = scli.check_output(('show', 'tls',))
+    ##print "output is", out
+
+    ssub.check_scp("/etc/os-release", "/tmp/os-release", direction=ConsoleUtils.IN)
+
+    def do_py(src, dst):
+        srcpat = os.path.join(srcdir, src, "*.py")
+        dstdir = os.path.join(pydir, dst, ".")
+        dstpat = os.path.join(pydir, dst, "*.pyc")
+        args = glob.glob(srcpat) + [dstdir,]
+        ssub.check_scp(*args,
+                       direction=ConsoleUtils.OUT, quote=False)
+        ssub.check_call(('rm', '-v', '-f', dstpat,),)
+
+    do_py("sm/ONL/packages/base/all/vendor-config-onl/src/python/onl/install",
+          "onl/install")
+
+    do_py("packages/base/all/slrest/src/python/slrest/base",
+          "slrest/base")
+    do_py("packages/base/all/slrest/src/python/slrest/api/v1",
+          "slrest/api/v1")
+
+    do_py("packages/base/all/slconfig/src/python/swl/util",
+          "swl/util")
+    do_py("packages/base/all/slconfig/src/python/swl/rlog",
+          "swl/rlog")
+    do_py("packages/base/all/slconfig/src/python/swl/snmp",
+          "swl/snmp")
+
+    do_py("packages/base/all/slconfig/src/python/slrest/api/v1_config",
+          "slrest/api/v1_config")
+    do_py("packages/base/all/slconfig/src/python/slrest/api/v1_status",
+          "slrest/api/v1_status")
+
+    do_py("packages/base/all/pcli/builds/src/desc/version001",
+          "pcli/desc/version001")
+
 else:
-    print "switch recovery2 ssh not ok"
-    scli = ConsoleUtils.SwitchConnectCliSubprocess(host, switch)
-    scli.enableRecovery2()
 
-##scli = ConsoleUtils.SwitchPcliSubprocess(addr)
-##out = scli.check_output(('show', 'tls',))
-##print "output is", out
-
-ssub.check_scp("/etc/os-release", "/tmp/os-release", direction=ConsoleUtils.IN)
-##push_swi(host)
+    push_swl_swi(host)
 
 sys.exit(0)
