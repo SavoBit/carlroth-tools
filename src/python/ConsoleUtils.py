@@ -10,57 +10,6 @@ import socket
 
 import TrackUtils
 
-def findPubKey():
-    """Retrieve the SSH public key for switch communication.
-
-    Set the key specifier in $TESTS_SSH_KEY
-
-    - find the key
-    - find its public component
-    - make sure ssh-agent is running
-    - make sure the key is unlocked
-    """
-
-    if 'TESTS_SSH_KEY' not in os.environ:
-        raise ValueError("missing an SSH key specifier in $TEST_SSH_KEY")
-
-    if 'SSH_AUTH_SOCK' not in os.environ:
-        raise ValueError("no ssh-agent set up")
-
-    keySpec = os.environ['TESTS_SSH_KEY']
-
-    if not os.path.exists(keySpec):
-        raise ValueError("SSH key file not found")
-    if not os.path.exists(keySpec+'.pub'):
-        raise ValueError("SSH public key file not found")
-
-    # get the fingerprint
-    buf = subprocess.check_output(('ssh-keygen', '-l', '-f', keySpec,))
-    fpr = buf.strip().split()[1]
-
-    sigs = subprocess.check_output(('ssh-add', '-l',))
-    if fpr not in sigs:
-        raise ValueError("SSH key is not in ssh-agent")
-
-findPubKey()
-
-def getPubKey():
-    with open(os.environ['TESTS_SSH_KEY']+'.pub', "r") as fd:
-        pubkey = fd.read().strip()
-    return pubkey
-
-def getIdentityArgs():
-    ident = os.environ['TESTS_SSH_KEY']
-    return ['-oIdentityFile=%s' % ident, '-oIdentitiesOnly=yes',]
-
-ADMIN_USER = 'admin'
-ADMIN_PASS = 'adminadmin'
-
-TIMEOUT_BOOT = 180
-TIMEOUT_LONG = 30
-TIMEOUT_SHORT = 5
-TIMEOUT_LOGIN = 10
-
 def quote(s):
     """Quote a string so that it passes transparently through a shell."""
 
@@ -117,6 +66,57 @@ def quotePcli(s, quote=""):
         q += c
 
     return oq + q + oq
+
+def findPubKey():
+    """Retrieve the SSH public key for switch communication.
+
+    Set the key specifier in $TESTS_SSH_KEY
+
+    - find the key
+    - find its public component
+    - make sure ssh-agent is running
+    - make sure the key is unlocked
+    """
+
+    if 'TESTS_SSH_KEY' not in os.environ:
+        raise ValueError("missing an SSH key specifier in $TEST_SSH_KEY")
+
+    if 'SSH_AUTH_SOCK' not in os.environ:
+        raise ValueError("no ssh-agent set up")
+
+    keySpec = os.environ['TESTS_SSH_KEY']
+
+    if not os.path.exists(keySpec):
+        raise ValueError("SSH key file not found")
+    if not os.path.exists(keySpec+'.pub'):
+        raise ValueError("SSH public key file not found")
+
+    # get the fingerprint
+    buf = subprocess.check_output(('ssh-keygen', '-l', '-f', keySpec,))
+    fpr = buf.strip().split()[1]
+
+    sigs = subprocess.check_output(('ssh-add', '-l',))
+    if fpr not in sigs:
+        raise ValueError("SSH key is not in ssh-agent")
+
+findPubKey()
+
+def getPubKey():
+    with open(os.environ['TESTS_SSH_KEY']+'.pub', "r") as fd:
+        pubkey = fd.read().strip()
+    return pubkey
+
+def getIdentityArgs():
+    ident = os.environ['TESTS_SSH_KEY']
+    return ['-oIdentityFile=%s' % ident, '-oIdentitiesOnly=yes',]
+
+ADMIN_USER = 'admin'
+ADMIN_PASS = 'adminadmin'
+
+TIMEOUT_BOOT = 180
+TIMEOUT_LONG = 30
+TIMEOUT_SHORT = 5
+TIMEOUT_LOGIN = 10
 
 class PopenBase(subprocess.Popen):
 
@@ -182,10 +182,9 @@ class SshPopen(PopenBase):
                   '-oUser=%s' % user,
                   '-oStrictHostKeyChecking=no',
                   '-oUserKnownHostsFile=/dev/null',
-                  topt,
-                  host,]
-
+                  topt,]
         sshcmd.extend(getIdentityArgs())
+        sshcmd.append(host)
 
         if ':' in host:
             sshcmd[2:2] = ['-6',]
@@ -278,9 +277,8 @@ class SshSubprocessBase(SubprocessBase):
                   '-oStrictHostKeyChecking=no',
                   '-oUserKnownHostsFile=/dev/null',
                   '-oBatchMode=yes',]
-        scpcmd += scpargs
-
         scpcmd.extend(getIdentityArgs())
+        scpcmd.extend(scpargs)
 
         args = (scpcmd,) + tuple(args)
         subprocess.check_call(scpcmd)
@@ -675,7 +673,7 @@ class ControllerAdminSubprocess(SshSubprocessBase):
                     ('chmod', '0700', '/root/.ssh',),
                     ('touch', '/root/.ssh/authorized_keys',),
                     ('chmod', '0600', '/root/.ssh/authorized_keys',),
-                    ('set', 'dummy', getPubKey(),),
+                    ('set', 'dummy', quote(getPubKey()),),
                     ('shift',),
                     ('echo', '"$*"', ">>/root/.ssh/authorized_keys",),
                 ):
@@ -887,7 +885,7 @@ class SwitchConnectMixin:
                     ('chmod', '0700', '/var/run/recovery2/.ssh',),
                     ('touch', '/var/run/recovery2/.ssh/authorized_keys',),
                     ('chmod', '0600', '/var/run/recovery2/.ssh/authorized_keys',),
-                    ('set', 'dummy', getPubKey(),),
+                    ('set', 'dummy', quote(getPubKey()),),
                     ('shift',),
                     ('echo', '"$*"', ">>/var/run/recovery2/.ssh/authorized_keys",),
                 ):
@@ -1178,7 +1176,7 @@ class SwitchInternalSshSubprocess(SshSubprocessBase):
                     ('chmod', '0700', '/root/.ssh',),
                     ('touch', '/root/.ssh/authorized_keys',),
                     ('chmod', '0600', '/root/.ssh/authorized_keys',),
-                    ('set', 'dummy', getPubKey(),),
+                    ('set', 'dummy', quote(getPubKey()),),
                     ('shift',),
                     ('echo', '"$*"', ">>/root/.ssh/authorized_keys",),
                 ):
@@ -1333,7 +1331,7 @@ class TrackConsoleSubprocess(SubprocessBase):
                     ('chmod', '0700', '/root/.ssh',),
                     ('touch', '/root/.ssh/authorized_keys',),
                     ('chmod', '0600', '/root/.ssh/authorized_keys',),
-                    ('set', 'dummy', getPubKey(),),
+                    ('set', 'dummy', quote(getPubKey()),),
                     ('shift',),
                     ('echo', '"$*"', ">>/root/.ssh/authorized_keys",),
                 ):
@@ -1376,7 +1374,7 @@ class TrackConsoleSubprocess(SubprocessBase):
                     ('chmod', '0700', '/root/.ssh',),
                     ('touch', '/root/.ssh/authorized_keys',),
                     ('chmod', '0600', '/root/.ssh/authorized_keys',),
-                    ('set', 'dummy', getPubKey(),),
+                    ('set', 'dummy', quote(getPubKey()),),
                     ('shift',),
                     ('echo', '"$*"', ">>/root/.ssh/authorized_keys",),
                 ):
@@ -1541,7 +1539,7 @@ class SwitchRootSubprocess(SshSubprocessBase):
                     ('chmod', '0700', '/root/.ssh',),
                     ('touch', '/root/.ssh/authorized_keys',),
                     ('chmod', '0600', '/root/.ssh/authorized_keys',),
-                    ('set', 'dummy', getPubKey(),),
+                    ('set', 'dummy', quote(getPubKey()),),
                     ('shift',),
                     ('echo', '"$*"', ">>/root/.ssh/authorized_keys",),
                 ):
