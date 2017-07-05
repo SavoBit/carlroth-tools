@@ -8,7 +8,13 @@ import re
 import tempfile
 import socket
 
-import TrackUtils
+import IpUtils
+
+# track support is only for remote access
+try:
+    import TrackUtils
+except ImportError:
+    pass
 
 def quote(s):
     """Quote a string so that it passes transparently through a shell."""
@@ -479,7 +485,7 @@ class ControllerCliMixin:
             if addr != '0.0.0.0':
                 l, s, r = addr.partition('%')
                 if s:
-                    addr = "%s%%%s" % (l, TrackUtils.getDefaultV6Intf(),)
+                    addr = "%s%%%s" % (l, IpUtils.getDefaultV6Intf(),)
                 return addr
 
         # else use the link local address
@@ -488,13 +494,13 @@ class ControllerCliMixin:
         if addr is not None:
             l, s, r = addr.partition('%')
             if s:
-                addr = "%s%%%s" % (l, TrackUtils.getDefaultV6Intf(),)
+                addr = "%s%%%s" % (l, IpUtils.getDefaultV6Intf(),)
             return addr
 
         # else, use the mac address
         mac = rec.get('Switch MAC Address', None)
         if mac is not None:
-            return TrackUtils.getV6AddrFromMac(mac)
+            return IpUtils.getV6AddrFromMac(mac)
 
         return None
 
@@ -1555,6 +1561,6 @@ class SwitchRootSubprocess(SshSubprocessBase):
         bt = TrackUtils.BigTrack()
         addr = bt.getSwitchV6Address(switch)
         if addr is None: return None
-        intf = TrackUtils.getDefaultV6Intf()
+        intf = IpUtils.getDefaultV6Intf()
         addr = addr + '%' + intf
         return cls(addr)
