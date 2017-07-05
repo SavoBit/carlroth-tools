@@ -10,13 +10,13 @@ bindir = os.path.abspath(os.path.dirname(__file__))
 toolsdir = os.path.dirname(os.path.dirname(bindir))
 sys.path.append(os.path.join(toolsdir, "src/python"))
 
-import ConsoleUtils, TrackUtils
+import ConsoleUtils, IpUtils
 
 args = list(sys.argv[1:])
 
 switch = args.pop(0)
 if ':' in switch and not '%' in switch:
-   switch += '%' + TrackUtils.getDefaultV6Intf()
+   switch += '%' + IpUtils.getDefaultV6Intf()
 
 sub = ConsoleUtils.SwitchRootSubprocess(switch)
 if not sub.testBatchSsh():
