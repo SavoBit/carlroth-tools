@@ -43,6 +43,7 @@ do_build_common() {
   fi
 
   ${MAKE} -C ${SWITCHLIGHT}/components/all/vendor-config/switchlight deb
+  ${MAKE} -C ${SWITCHLIGHT}/components/all/slconfig/ deb
   ${MAKE} -C ${SWITCHLIGHT}/components/all/slrest/ deb
   ${MAKE} -C ${SWITCHLIGHT}/components/all/ztn/ deb
   ${MAKE} -C ${SWITCHLIGHT}/components/all/cli/ deb
@@ -99,6 +100,7 @@ do_build_broadcom() {
 do_build_installer() {
   ${MAKE} -C ${SWITCHLIGHT}/builds/installer/${ARCH2}/bcf/ztn
   ${MAKE} -C ${SWITCHLIGHT}/builds/installer/${ARCH2}/bcf/ztn-ipv4
+  ${MAKE} -C ${SWITCHLIGHT}/builds/installer/${ARCH2}/${SWICFG}
 
   if test "$build_bmf"; then
     if test -f ${SWITCHLIGHT}/builds/installer/${ARCH2}/bmf/netboot/Makefile; then
@@ -117,20 +119,28 @@ do_build_swi() {
   ${MAKE} -C ${SWITCHLIGHT}/builds/swi/${ARCH2}/${SWICFG}
 }
 
+# the other arch is out of date, whatevs
+do_build_deb() {
+  ${MAKE} -C ${SWITCHLIGHT}/builds/deb/${SWICFG} deb
+}
+
 do_stage_floodlight() {
   rm -f ${HOME}/work/controller/eclipse/appliance-dev/var/lib/floodlight/zerotouch/*.swi
   cp ${SWITCHLIGHT}/builds/swi/${ARCH2}/${SWICFG}/*_SWI.swi ${HOME}/work/controller/eclipse/appliance-dev/var/lib/floodlight/zerotouch/.
   rm -f ${HOME}/work/controller/eclipse/appliance-dev/var/lib/floodlight/zerotouch/*-INSTALLER
   cp ${SWITCHLIGHT}/builds/installer/${ARCH2}/bcf/ztn/*-INSTALLER ${HOME}/work/controller/eclipse/appliance-dev/var/lib/floodlight/zerotouch/.
+  set dummy ${SWITCHLIGHT}/builds/installer/${ARCH2}/${SWICFG}/*INSTALLER
+  echo "http://10.6.0.5/root$2"
 }
 
 do_build() {
   rm -f ${SWITCHLIGHT}/make/versions/*
   do_build_common
   do_build_initrd
-  do_build_broadcom
-  do_build_installer
+  ##do_build_broadcom
   do_build_swi
+  do_build_installer
+  do_build_deb
   do_stage_floodlight
 }
 
