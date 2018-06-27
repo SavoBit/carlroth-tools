@@ -1128,6 +1128,10 @@ class SwitchInternalSshPopen(ControllerAdminPopen):
     USER = "root"
     PASS = "bsn"
 
+class SwitchOnlSshPopen(ControllerAdminPopen):
+    USER = "root"
+    PASS = "onl"
+
 class SwitchInternalSshSubprocess(SshSubprocessBase):
 
     popen_klass = SwitchInternalSshPopen
@@ -1564,3 +1568,6 @@ class SwitchRootSubprocess(SshSubprocessBase):
         intf = IpUtils.getDefaultV6Intf()
         addr = addr + '%' + intf
         return cls(addr)
+
+class SwitchOnlSubprocess(SwitchRootSubprocess):
+    popen_klass = SwitchOnlSshPopen
