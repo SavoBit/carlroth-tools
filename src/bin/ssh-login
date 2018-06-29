@@ -1,0 +1,44 @@
+#!/bin/sh
+#
+######################################################################
+#
+# ssh-login
+#
+# helper ssh login program
+#
+######################################################################
+
+flag_gnupg_new=
+flag_agent_running=
+
+buf=$(gpgconf --version 2>&1)
+case "$buf" in
+  *2.1*)
+    flag_gnupg_new=1
+    ;;
+esac
+
+if test "$flag_gnupg_new"; then
+  set dummy $(gpgconf --list-dirs | grep agent-socket | cut -d: -f2)
+  if test -S "$3"; then
+    flag_agent_running=1
+  fi
+fi
+
+if test "$flag_gnupg_new"; then
+  :
+else
+  if test -x "/usr/bin/gpg-agent"; then
+    exec /usr/bin/gpg-agent --no-use-standard-socket --pinentry-program /usr/bin/pinentry-curses --daemon -- bash --noediting -l
+    :
+  fi
+fi
+
+if test "$flag_gnupg_new"; then
+  if test -x "/usr/bin/gpg-agent"; then
+    exec /usr/bin/gpg-agent --pinentry-program /usr/bin/pinentry-curses --daemon -- bash --noediting -l	
+    :
+  fi
+fi
+
+exec bash --noediting -l
