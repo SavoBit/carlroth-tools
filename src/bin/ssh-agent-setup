@@ -1,10 +1,12 @@
-#!/bin/sh
+#!/bin/bash
 #
 ######################################################################
 #
 # ssh-agent-setup
 #
 # normalize the ssh-agent
+#
+# Emit SSH_AUTH_SOCK etc. for shell scripts
 #
 ######################################################################
 
@@ -81,24 +83,75 @@ ssh_agent_find()
   return 1
 }
 
+ssh_agent_clean()
+{
+  local p tgt
+  for p in $sshruntime/ssh/*; do
+    test -L "$p" && continue
+    if test -S $p; then
+      if ssh_agent_valid $p; then
+        :
+      else
+        echo "$CMD:$FUNCNAME: socket $p is stale" 1>&2
+        rm $p
+      fi
+    fi
+  done
+  for p in $sshruntime/ssh/*; do
+    if test -L $p; then
+      tgt=$(readlink $p)
+      if test -e "$tgt"; then
+        :
+      else
+        echo "$CMD:$FUNCNAME: symlink $p --> $tgt is stale" 1>&2
+        rm $p
+      fi
+    fi
+  done
+}
+
+gpg_agent_valid()
+{
+  local sock pid
+  sock=$1; shift
+
+  set dummy $(gpg-connect-agent -S "$sock" "getinfo pid" /bye 2>/dev/null)
+  if test "$2" = "D"; then
+    pid=$3
+    if ps -p $pid 1>/dev/null 2>&1; then
+      echo $pid
+      return 0
+    else
+      # reports a PID but it is wrong
+      echo -1
+      return 0
+    fi
+  fi
+
+  set dummy $(gpg-connect-agent -S "$sock" "nop" /bye 2>/dev/null)
+  if test "$2" = "OK"; then
+    echo -1
+    return 0
+  fi
+
+  return 1
+}
+
+# create an SSH runtime in /tmp
+# (not in $TMPDIR, this creates problems for MacOS)
+set dummy /tmp/runtime-$(id -u)-*
+if test -d "$2" -a -w "$2"; then
+  sshruntime=$2
+else
+  sshruntime=$(mktemp -d /tmp/runtime-$(id -u)-XXXXXX)
+fi
+
+# system runtime for e.g. Linux may be different
 runtime=${XDG_RUNTIME_DIR="/run/user/$(id -u)"}
 if test -d "$runtime"; then
-  set dummy /tmp/runtime-$(id -u)-*
-  if test -d "$2" -a -w "$2"; then
-    runtime_=$2
-  else
-    runtime_=$(mktemp -d /tmp/runtime-$(id -u)-XXXXXX)
-  fi
-  sshruntime=$runtime_
+  :
 else
-  set dummy /tmp/runtime-$(id -u)-*
-  if test -d "$2" -a -w "$2"; then
-    runtime=$2
-  else
-    # Ugh, Darwin does not implement 'mktemp -t' correctly
-    runtime=$(mktemp -d /tmp/runtime-$(id -u)-XXXXXX)
-  fi
-  sshruntime=$runtime
+  runtime=$sshruntime
 fi
 
 agent_sock=$(gpgconf --list-dirs | grep ^agent-socket: | cut -d: -f2)
@@ -111,12 +164,16 @@ fi
 
 # this may be from a forwarded gpg-agent connection (socket or file)
 if test -e "$agent_sock"; then
-  set dummy $(gpg-connect-agent -S $agent_sock "getinfo pid" /bye 2>/dev/null)
-  if test "$2" = "D"; then
-    agent_pid=$3
-  else
+  agent_pid=$(gpg_agent_valid $agent_sock)
+  if test -z "$agent_pid"; then
     echo "$CMD: *** invald gpg-agent socket $agent_sock" 1>&2
   fi
+fi
+
+if test -S "$SSH_AUTH_SOCK"; then
+  sock_real=$(realpath $SSH_AUTH_SOCK)
+else
+  sock_real=
 fi
 
 ##############################
@@ -126,12 +183,6 @@ fi
 #
 ##############################
 
-if test -S "$SSH_AUTH_SOCK"; then
-  sock_real=$(realpath $SSH_AUTH_SOCK)
-else
-  sock_real=
-fi
-
 if test "$SSH_CLIENT"; then
   echo "$CMD: ssh-agent is being provided remotely ($SSH_AUTH_SOCK)" 1>&2
 elif test -S "$agent_ssh_sock"; then
@@ -140,11 +191,10 @@ elif test -S "$agent_ssh_sock"; then
     :
   else
     echo "$CMD: ssh-agent is being provided by a local gpg-agent" 1>&2
-    SSH_AUTH_SOCK="$agent_ssh_sock"
-    export SSH_AUTH_SOCK
+    sock_real=$(realpath $agent_ssh_sock)
   fi
 
-  if test "$agent_pid" != "-1"; then
+  if test "$agent_pid" -a "$agent_pid" != "-1"; then
     SSH_AGENT_PID=$agent_pid
     export SSH_AGENT_PID
   fi
@@ -160,10 +210,7 @@ fi
 #
 ##############################
 
-if test ${SSH_AUTH_SOCK+set}; then
-  # compute the real path of the ssh-agent socket
-
-  sock_real=$(realpath $SSH_AUTH_SOCK)
+if test "$sock_real"; then
 
   # ok to move/link the socket, but keep it on the same filesystem
   # Also avoid $TMPDIR on MacOS because long pathnames
@@ -173,6 +220,7 @@ if test ${SSH_AUTH_SOCK+set}; then
   runtime_fs=$(stat_d ${runtime} 2>/dev/null)
 
   if test $sock_fs = $runtime_fs; then
+    # on Linux, use /run/user instead of /tmp/run-XXX
     sshruntime=$runtime
     sshruntime_fs=$runtime_fs
   else
@@ -195,17 +243,15 @@ if test ${SSH_AUTH_SOCK+set}; then
       mkdir -p ${sshruntime}/ssh
       rm -f $sock_canon
       ln $sock_real $sock_canon
+      # hard-link, not symlink
     fi
     sock_real=$sock_canon
   else
     echo "$CMD: *** ssh agent at $sock_real cannot be moved/linked" 1>&2
   fi
 
-  SSH_AUTH_SOCK=$sock_real
-  export SSH_AUTH_SOCK
-
   if ssh_agent_valid $sock_real; then
-    :
+    SSH_AUTH_SOCK=$sock_real
   else
     echo "$CMD: *** invalid agent $sock_real" 1>&2
     sock=$(ssh_agent_find)
@@ -215,6 +261,8 @@ if test ${SSH_AUTH_SOCK+set}; then
   fi
 
 fi
+
+ssh_agent_clean
 
 # compute a friendly symlink
 if test -S "$SSH_AUTH_SOCK"; then
