@@ -271,9 +271,9 @@ if test -S "$SSH_AUTH_SOCK"; then
   # detect containers
   cid=$(container-id 2>/dev/null)
   if test "$cid"; then
-    sock_link=${sshruntime}/agent-docker-${cid}
+    sock_link=${sshruntime}/ssh/agent-docker-${cid}
   elif test "$SSH_AUTH_SOCK" -ef "$agent_ssh_sock"; then
-    sock_link=${sshruntime}/agent-gpg
+    sock_link=${sshruntime}/ssh/agent-gpg
   elif test "$SSH_CONNECTION"; then
     set dummy $SSH_CONNECTION
     sock_link="${sshruntime}/ssh/agent-${2}"
