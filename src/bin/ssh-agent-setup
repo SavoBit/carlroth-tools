@@ -1,0 +1,252 @@
+#!/bin/sh
+#
+######################################################################
+#
+# ssh-agent-setup
+#
+# normalize the ssh-agent
+#
+######################################################################
+
+CMD=${0##*/}
+TMPDIR=${TMPDIR-"/tmp"}
+
+case "$(uname -s)" in
+  Linux)
+    stat_d() {
+      stat -c "%d" "$1"
+    }
+    # ha ha suckers, not every version of coreutils has 'realpath'
+    if test -x /usr/bin/realpath; then
+      :
+    else
+      realpath() {
+        python -c "import os, sys; print os.path.realpath(sys.argv[1]);" "$@"
+      }
+    fi
+  ;;
+  Darwin)
+    realpath() {
+      python -c "import os, sys; print os.path.realpath(sys.argv[1]);" "$@"
+    }
+    stat_d() {
+      stat -f "%d" "$1"
+    }
+  ;;
+esac
+
+ssh_agent_valid()
+{
+  local sock sts
+  sock=$1; shift
+
+  env SSH_AUTH_SOCK=$sock ssh-add -l 1>/dev/null 2>&1
+  sts=$?
+
+  test $sts -eq 0 && return 0
+  # non-empty key list
+
+  test $sts -eq 1 && return 0
+  # empty key list, still OK
+
+  return 1
+}
+
+# find a working ssh-agent
+# grovel through the ssh runtime dir to find a valid socket
+ssh_agent_find()
+{
+  local pat sock failed
+
+  set dummy $SSH_CONNECTION
+  sock_pat="${sshruntime}/ssh/agent-${2}-*"
+
+  # prefer one from the same connecting client
+  for sock in $(/bin/ls -1t $sock_pat 2>/dev/null); do
+    if ssh_agent_valid $sock; then
+      echo "$CMD:$FUNCNAME: found client agent $sock" 1>&2
+      echo $sock
+      return 0
+    fi
+  done
+
+  for sock in $(/bin/ls -1t ${sshruntime}/ssh 2>/dev/null); do
+    if ssh_agent_valid ${sshruntime}/ssh/$sock; then
+      echo "$CMD: found non-client agent $sock" 1>&2
+      echo $sock
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+runtime=${XDG_RUNTIME_DIR="/run/user/$(id -u)"}
+if test -d "$runtime"; then
+  set dummy /tmp/runtime-$(id -u)-*
+  if test -d "$2" -a -w "$2"; then
+    runtime_=$2
+  else
+    runtime_=$(mktemp -d /tmp/runtime-$(id -u)-XXXXXX)
+  fi
+  sshruntime=$runtime_
+else
+  set dummy /tmp/runtime-$(id -u)-*
+  if test -d "$2" -a -w "$2"; then
+    runtime=$2
+  else
+    # Ugh, Darwin does not implement 'mktemp -t' correctly
+    runtime=$(mktemp -d /tmp/runtime-$(id -u)-XXXXXX)
+  fi
+  sshruntime=$runtime
+fi
+
+agent_sock=$(gpgconf --list-dirs | grep ^agent-socket: | cut -d: -f2)
+agent_ssh_sock=$(gpgconf --list-dirs | grep ^agent-ssh-socket: | cut -d: -f2)
+if test "$agent_ssh_sock"; then
+  :
+else
+  agent_ssh_sock=${agent_sock}.ssh
+fi
+
+# this may be from a forwarded gpg-agent connection (socket or file)
+if test -e "$agent_sock"; then
+  set dummy $(gpg-connect-agent -S $agent_sock "getinfo pid" /bye 2>/dev/null)
+  if test "$2" = "D"; then
+    agent_pid=$3
+  else
+    echo "$CMD: *** invald gpg-agent socket $agent_sock" 1>&2
+  fi
+fi
+
+##############################
+#
+# see if gpg-agent should supercede ssh-agent,
+# but only for local sessions
+#
+##############################
+
+if test -S "$SSH_AUTH_SOCK"; then
+  sock_real=$(realpath $SSH_AUTH_SOCK)
+else
+  sock_real=
+fi
+
+if test "$SSH_CLIENT"; then
+  echo "$CMD: ssh-agent is being provided remotely ($SSH_AUTH_SOCK)" 1>&2
+elif test -S "$agent_ssh_sock"; then
+
+  if test "$sock_real" -ef "$agent_ssh_sock"; then
+    :
+  else
+    echo "$CMD: ssh-agent is being provided by a local gpg-agent" 1>&2
+    SSH_AUTH_SOCK="$agent_ssh_sock"
+    export SSH_AUTH_SOCK
+  fi
+
+  if test "$agent_pid" != "-1"; then
+    SSH_AGENT_PID=$agent_pid
+    export SSH_AGENT_PID
+  fi
+
+fi
+
+##############################
+#
+# Normalize the ssh-agent socket location so that it can be
+# shared with containers (and docker-machine)
+#
+# NOTE that this will also include forwarded ssh-agent connections
+#
+##############################
+
+if test ${SSH_AUTH_SOCK+set}; then
+  # compute the real path of the ssh-agent socket
+
+  sock_real=$(realpath $SSH_AUTH_SOCK)
+
+  # ok to move/link the socket, but keep it on the same filesystem
+  # Also avoid $TMPDIR on MacOS because long pathnames
+  sshdir=${sock_real%/*}
+
+  sock_fs=$(stat_d ${sshdir})
+  runtime_fs=$(stat_d ${runtime} 2>/dev/null)
+
+  if test $sock_fs = $runtime_fs; then
+    sshruntime=$runtime
+    sshruntime_fs=$runtime_fs
+  else
+    sshruntime_fs=$(stat_d ${sshruntime} 2>/dev/null)
+  fi
+
+  if test $sock_fs == $sshruntime_fs; then
+    if test "$SSH_CONNECTION"; then
+      set dummy $SSH_CONNECTION
+      for ck in $(echo $2 $3 | cksum); do break; done
+      sock_canon=${sshruntime}/ssh/agent-${ck}
+    else
+      # local ssh-agent, do not canonicalize
+      sock_canon=$sock_real
+    fi
+    if test $sock_real -ef $sock_canon; then
+      :
+    else
+      echo "$CMD: linking agent $sock_real --> $sock_canon" 1>&2
+      mkdir -p ${sshruntime}/ssh
+      rm -f $sock_canon
+      ln $sock_real $sock_canon
+    fi
+    sock_real=$sock_canon
+  else
+    echo "$CMD: *** ssh agent at $sock_real cannot be moved/linked" 1>&2
+  fi
+
+  SSH_AUTH_SOCK=$sock_real
+  export SSH_AUTH_SOCK
+
+  if ssh_agent_valid $sock_real; then
+    :
+  else
+    echo "$CMD: *** invalid agent $sock_real" 1>&2
+    sock=$(ssh_agent_find)
+    if test "$sock"; then
+      SSH_AUTH_SOCK=$sock
+    fi
+  fi
+
+fi
+
+# compute a friendly symlink
+if test -S "$SSH_AUTH_SOCK"; then
+  sock_link=$HOME/.ssh/agent-socket
+
+  # detect containers
+  cid=$(container-id 2>/dev/null)
+  if test "$cid"; then
+    sock_link=${sshruntime}/agent-docker-${cid}
+  elif test "$SSH_AUTH_SOCK" -ef "$agent_ssh_sock"; then
+    sock_link=${sshruntime}/agent-gpg
+  elif test "$SSH_CONNECTION"; then
+    set dummy $SSH_CONNECTION
+    sock_link="${sshruntime}/ssh/agent-${2}"
+    sock_link=${sock_link//:/-}
+    sock_link=${sock_link//[.]/-}
+  else
+    sock_link=${sshruntime}/ssh/agent
+  fi
+
+  if test -S "$SSH_AUTH_SOCK"; then
+    echo "$CMD: linking agent $SSH_AUTH_SOCK --> $sock_link" 1>&2
+    ln -sf $SSH_AUTH_SOCK $sock_link
+    export SSH_AUTH_SOCK=$sock_link
+  fi
+fi
+
+if test "$SSH_AUTH_SOCK"; then
+  echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK;"
+  echo "export SSH_AUTH_SOCK;"
+fi
+if test "$SSH_AGENT_PID"; then
+  echo "SSH_AGENT_PID=$SSH_AGENT_PID;"
+  echo "export SSH_AGENT_PID;"
+fi

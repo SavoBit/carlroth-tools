@@ -1,0 +1,108 @@
+#!/bin/sh
+#
+######################################################################
+#
+# gpg-agent-setup
+#
+# clean up the gpg-agent socket
+#
+# no output required here; gpg-agent uses default paths always
+#
+######################################################################
+
+CMD=${0##*/}
+
+sock=$(gpgconf --list-dirs | grep ^agent-socket: | cut -d: -f2)
+socketdir=$(gpgconf --list-dirs | grep ^socketdir: | cut -d: -f2)
+if test "$socketdir"; then
+  :
+else
+  socketdir=${sock%/*}
+fi
+if test -d "$socketdir"; then
+  :
+else
+  gpgconf --create-socketdir
+fi
+
+sock_local=$socketdir/S.gpg-agent.local
+sock_remote=$socketdir/S.gpg-agent.remote
+
+# move the local gpg-agent socket out of the way
+# and use a redirect file
+if test -S "$sock"; then
+  set dummy $(gpg-connect-agent -S "$sock" "getinfo pid" /bye 2>/dev/null)
+  if test "$2" = "D"; then
+    pid=$3
+    if ps -p $pid 1>/dev/null 2>&1; then
+      echo "$CMD: staging local gpg-agent (pid $pid)" 1>&2
+      # gpg-agent is running locally
+      rm -f $sock_local
+      mv $sock $sock_local
+      cp /dev/null $sock
+      echo "%Assuan%" >> $sock
+      echo "socket=$sock_local" >> $sock
+    fi
+  else
+    echo "$CMD: *** invalid gpg-agent socket $sock" 1>&2
+  fi
+elif test -S $sock_local; then
+  # move the local gpg-agent back into position after a logout
+  set dummy $(gpg-connect-agent -S "$sock_local" "getinfo pid" /bye 2>/dev/null)
+  if test "$2" = "D"; then
+    pid=$3
+    if ps -p $pid 1>/dev/null 2>&1; then
+      if grep -q $sock_local $sock 2>/dev/null; then
+        :
+      else
+        echo "$CMD: restoring local gpg-agent (pid $pid)"
+        cp /dev/null $sock
+        echo "%Assuan%" >> $sock
+        echo "socket=$sock_local" >> $sock
+      fi
+    fi
+  else
+    echo "$CMD: *** invalid gpg-agent socket $sock_local" 1>&2
+    rm -f $sock_local
+  fi
+fi
+
+##############################
+#
+# see if we created a remote socket while logging in
+#
+# NOTE that default forwarding behavior for SSH will
+# *NOT* delete the socket if it already exists
+#
+##############################
+
+if test ${SSH_CLIENT+set}; then
+  if test -S "$sock_remote"; then
+    set dummy $(gpg-connect-agent -S "$sock_remote" "getinfo pid" /bye 2>/dev/null)
+    if test "$2" = "D"; then
+      pid=$3
+      for client in $SSH_CLIENT; do break; done
+      for ck in $(echo $client | cksum); do break ;done
+      sock_canon=$socketdir/s.gpg-agent.${ck}
+      echo "$CMD: staging remote gpg-agent (pid $pid, client $client) as $sock_canon" 1>&2
+      rm -f $sock_canon
+      mv $sock_remote $sock_canon
+      if test -S "$sock"; then
+        echo "$CMD: *** default gpg-agent socket is in the way" 1>&2
+      else
+        rm -f "$sock"
+        echo "$CMD: updating default gpg-agent socket" 1>&2
+        cp /dev/null $sock
+        echo "%Assuan%" >> $sock
+        echo "socket=$sock_canon" >> $sock
+      fi
+    else
+      echo "$CMD: *** invalid remote gpg-agent socket $sock_remote" 1>&2
+      rm -f $sock_remote
+    fi
+  else
+    echo "$CMD: *** remote SSH connection did not provide a gpg-agent" 1>&2
+  fi
+fi
+
+exit 0
