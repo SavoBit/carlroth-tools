@@ -6,10 +6,46 @@
 #
 ######################################################################
 
+# if running bash
+if [ -n "$BASH_VERSION" ]; then
+    # include .bashrc if it exists
+    if [ -f "$HOME/.bashrc" ]; then
+	. "$HOME/.bashrc"
+    fi
+fi
+
+addpath()
+{
+  local var val
+  var=$1; shift
+  val=$1; shift
+
+  case ":${!var}:" in
+    *:"$val":*) ;;
+    *)
+      eval $var=\"${!var}:$val\"
+    ;;
+  esac
+}
+
+prependpath()
+{
+  local var val
+  var=$1; shift
+  val=$1; shift
+
+  case ":${!var}:" in
+    *:"$val":*) ;;
+    *)
+      eval $var=\"$val:${!var}\"
+    ;;
+  esac
+}
+
 case "$(uname -s)" in
   Linux)
     stat_d() {
-      stat -c "%d" ${runtime}      
+      stat -c "%d" "$1"
     }
     # ha ha suckers, not every version of coreutils has 'realpath'
     if test -x /usr/bin/realpath; then
@@ -25,16 +61,29 @@ case "$(uname -s)" in
       python -c "import os, sys; print os.path.realpath(sys.argv[1]);" "$@"
     }
     stat_d() {
-      stat -f "%d" ${runtime}      
+      stat -f "%d" "$1"
     }
   ;;
 esac
+
+# any initial path settings here
+
+if test ${PS1+set}; then
+  case "$TERM" in
+    dumb)
+      unset DISPLAY
+      export PAGER=cat
+    ;;
+  esac
+fi
 
 ##############################
 #
 # Compute a suitable cache directory for ccache
 #
 ##############################
+
+# set any default for $cache
 
 if test "$cache"; then
   :
@@ -102,95 +151,8 @@ else
   fi
 fi
 
-##############################
-#
-# Normalize the ssh-agent socket location so that it can be
-# shared with containers (and docker-machine)
-#
-##############################
-
-if test ${SSH_AUTH_SOCK+set}; then
-
-  # compute the real path of the ssh-agent socket
-
-  adst=$(realpath $SSH_AUTH_SOCK)
-
-  # ok to move the socket, but keep it on the same filesystem
-  # Also avoid $TMPDIR on MacOS, see above
-  sshdir=${adst%/*}
-  if test $(stat_d ${runtime} 2>/dev/null) = $(stat_d ${sshdir}); then
-    sshruntime=$runtime
-  else
-    set dummy /tmp/runtime-$(id -u)-*
-    if test -d "$2" -a -w "$2"; then
-      sshruntime="$2"
-    else
-      sshruntime=$(mktemp -d /tmp/runtime-$(id -u)-XXXXXX)
-    fi
-  fi
-
-  if test -S "$adst"; then
-    case "$adst" in
-      /tmp/ssh-*/agent.*)
-        # temporary socket set up by sshd
-        set dummy $SSH_CONNECTION
-        mkdir -p ${sshruntime}/ssh
-        mv $adst "${sshruntime}/ssh/ssh-agent-${2}-${3}"
-        adst="${sshruntime}/ssh/ssh-agent-${2}-${3}"
-      ;;
-    esac
-  fi
-
-  SSH_AUTH_SOCK=$adst
-
-  ##############################
-  #
-  # make sure the socket is actually working,
-  # else find another one
-  #
-  # TODO does not clean up broken sockets
-  #
-  ##############################
-  
-  if ssh-add -l 1>/dev/null 2>&1; then
-    :
-  else
-    # grovel through the ssh runtime dir to find a valid socket
-    for sock in $(/bin/ls -1t ${sshruntime}/ssh); do
-      if env SSH_AUTH_SOCK=${sshruntime}/ssh/$sock ssh-add -l 1>/dev/null 2>&1; then
-        SSH_AUTH_SOCK=${sshruntime}/ssh/$sock
-        break
-      fi
-    done
-  fi
-
-  # compute a friendly name for the environment variable
-
-  asrc=$HOME/.ssh/agent-socket
-
-  # detect isolate shell login
-  case "$SSH_CLIENT" in
-    10.198.0.*)
-      set dummy $SSH_CONNECTION
-      ifs=$ifs; IFS=.
-      set dummy $4
-      iso=$5
-      IFS=$ifs
-      asrc=$HOME/.ssh/agent-socket-iso${iso}
-      ;;
-  esac
-
-  # detect containers
-  cid=$(container-id 2>/dev/null)
-  if test "$cid"; then
-    asrc=$HOME/.ssh/agent-socket-docker-${cid}
-  fi
-
-  if test -S "$SSH_AUTH_SOCK"; then
-    ln -sf $SSH_AUTH_SOCK $asrc
-    export SSH_AUTH_SOCK=$asrc
-  fi
-fi
+$work/tools/src/bin/gpg-agent-setup
+eval $($work/tools/src/bin/ssh-agent-setup)
 
 ##############################
 #
