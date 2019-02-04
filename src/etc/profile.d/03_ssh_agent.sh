@@ -100,7 +100,7 @@ if test "$sock_real"; then
     elif ssh_agent_valid $sock_canon; then
       echo "$CMD: *** agent $sock_canon is in the way" 1>&2
     else
-      echo "$CMD: linking agent $sock_real --> $sock_canon" 1>&2
+      loginmsg "$CMD: linking agent $sock_real --> $sock_canon"
       mkdir -p ${sshruntime}/ssh
       rm -f $sock_canon
       ln $sock_real $sock_canon
@@ -129,7 +129,6 @@ fi
 
 # compute a friendly symlink
 if test -S "$SSH_AUTH_SOCK"; then
-  sock_link=$HOME/.ssh/agent-socket
 
   # detect containers
   cid=$(container-id 2>/dev/null)
@@ -146,24 +145,13 @@ if test -S "$SSH_AUTH_SOCK"; then
     sock_link=${sshruntime}/ssh/agent
   fi
 
-  if test -S "$SSH_AUTH_SOCK"; then
-    if test -L $sock_link; then
-      tgt=$(readlink $sock_link)
-      if test $tgt -ef $SSH_AUTH_SOCK; then
-        :
-      else
-        echo "$CMD: linking agent $SSH_AUTH_SOCK --> $sock_link" 1>&2
-        rm -f $sock_link
-        ln -s $SSH_AUTH_SOCK $sock_link
-        export SSH_AUTH_SOCK=$sock_link
-      fi
-      unset tgt
-    else
-      echo "$CMD: linking agent $SSH_AUTH_SOCK --> $sock_link" 1>&2
-      rm -f $sock_link
-      ln -s $SSH_AUTH_SOCK $sock_link
-      export SSH_AUTH_SOCK=$sock_link
-    fi
+  if symlink $SSH_AUTH_SOCK $sock_link; then
+    export SSH_AUTH_SOCK=$sock_link
+  fi
+
+  # put a friendly link in $HOME
+  if symlink $SSH_AUTH_SOCK $HOME/.ssh/agent-socket; then
+    export SSH_AUTH_SOCK=$HOME/.ssh/agent-socket
   fi
 
   unset cid sock_link
