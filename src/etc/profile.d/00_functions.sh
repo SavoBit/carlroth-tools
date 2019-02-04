@@ -4,6 +4,8 @@
 #
 ##############################
 
+CMD=functions
+
 addpath()
 {
   local var val
@@ -92,8 +94,8 @@ ssh_agent_find()
     fi
   done
 
-  for sock in $(/bin/ls -1t ${sshruntime}/ssh 2>/dev/null); do
-    if ssh_agent_valid ${sshruntime}/ssh/$sock; then
+  for sock in $(/bin/ls -1t ${runtime}/ssh 2>/dev/null); do
+    if ssh_agent_valid ${runtime}/ssh/$sock; then
       echo "$CMD: found non-client agent $sock" 1>&2
       echo $sock
       return 0
@@ -119,7 +121,7 @@ ssh_agent_clean()
       fi
     fi
   done
-  for p in $sshruntime/ssh/*; do
+  for p in $runtime/ssh/*; do
     if test -L $p; then
       tgt=$(readlink $p)
       if test -e "$tgt"; then
@@ -159,6 +161,33 @@ gpg_agent_valid()
   return 1
 }
 
+gpg_agent_clean()
+{
+  local runtime p tgt
+  runtime=$1; shift
+
+  for p in $runtime/gnupg/S.gpg-agent.[0-9]*; do
+    test -L "$p" && continue
+    if test -S $p; then
+      if gpg_agent_valid $p 1>/dev/null; then
+        :
+      else
+        echo "$CMD:$FUNCNAME: socket $p is stale" 1>&2
+        rm $p
+      fi
+    fi
+  done
+  for p in $runtime/gnupg/S.gpg-agent.*; do
+    test -f "$p" || continue
+    tgt=$(grep socket= $p)
+    tgt=${sock#socket=}
+    if gpg_agent_valid $sock; then
+      echo "$CMD:$FUNCNAME: lookaside $p --> $tgt is stale" 1>&2
+      rm $p
+    fi
+  done
+}
+
 test_loginshell()
 {
   local buf
@@ -181,6 +210,13 @@ test_loginshell()
 
   return 1
 }
+
+##############################
+#
+# True if this is an SSH login session
+# (also True for multiplexed connections)
+#
+##############################
 
 test_ssh_client()
 {
@@ -209,3 +245,96 @@ loginmsg()
   echo "$@"
   return 0
 }
+
+##############################
+#
+# symlink TARGET DEST
+#
+# update a symlink, return 1 if this is not possible
+#
+##############################
+
+symlink()
+{
+  local tgt lnk otgt
+  tgt=$1; shift
+  lnk=$1; shift
+
+  if test -L $lnk; then
+    otgt=$(readlink $lnk)
+    if test $tgt -ef $otgt; then
+      return 0
+    else
+      loginmsg "$CMD:$FUNCNAME: $tgt --> $lnk"
+      rm -f $lnk
+      ln -s $tgt $lnk
+      return 0
+    fi
+  elif test -e $lnk; then
+    echo "$CMD:$FUNCNAME:$lnk: *** not a link" 1>&2
+    return 1
+  else
+    loginmsg "$CMD:$FUNCNAME: agent $tgt --> $lnk"
+    rm -f $lnk
+    ln -s $tgt $lnk
+    return 0
+  fi
+}
+
+##############################
+#
+# gpglink SOCKET DEST
+#
+# Create a Assuan look-aside at DEST that refers to SOCKET
+# If DEST is a socket, move it first
+#
+##############################
+
+gpglink()
+{
+  local sock dst
+  sock=$1; shift
+  dst=$1; shift
+
+  # Initally, the socket may be in-place and may need to be moved
+  if test -S $dst; then
+    if gpg_agent_valid $dst 1>/dev/null; then
+      if gpg_agent_valid $sock; then
+        echo "$CMD:$FUNCNAME:$sock: *** in the way" 1>&2
+	return 1
+      fi
+      rm -f $sock
+      mv $dst $sock
+    else
+      echo "$CMD:$FUNCNAME:$dst: *** invalid socket" 1>&2
+      return 1
+    fi
+  elif test -S "$sock"; then
+    if gpg_agent_valid $sock 1>/dev/null; then
+      :
+    else
+      echo "$CMD:$FUNCNAME:$sock: *** invalid socket" 1>&2
+      return 1
+    fi
+  else
+    echo "$CMD:$FUNCNAME:$sock: *** not a socket" 1>&2
+    return 1
+  fi
+
+  if test -f $dst; then
+    grep -q socket=$sock $dst && return 0
+    rm -f $dst
+  fi
+
+  loginmsg "$CMD:$FUNCNAME: lookaside $sock --> $dst"
+
+  cp /dev/null $dst
+  chmod 0600 $dst
+  echo "%Assuan%" >> $dst
+  echo "socket=$sock" >> $dst
+
+  return 0
+}
+
+unset CMD
+return 0
