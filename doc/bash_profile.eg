@@ -14,57 +14,14 @@ if [ -n "$BASH_VERSION" ]; then
     fi
 fi
 
-addpath()
-{
-  local var val
-  var=$1; shift
-  val=$1; shift
 
-  case ":${!var}:" in
-    *:"$val":*) ;;
-    *)
-      eval $var=\"${!var}:$val\"
-    ;;
-  esac
-}
+work=$HOME/work
 
-prependpath()
-{
-  local var val
-  var=$1; shift
-  val=$1; shift
-
-  case ":${!var}:" in
-    *:"$val":*) ;;
-    *)
-      eval $var=\"$val:${!var}\"
-    ;;
-  esac
-}
-
-case "$(uname -s)" in
-  Linux)
-    stat_d() {
-      stat -c "%d" "$1"
-    }
-    # ha ha suckers, not every version of coreutils has 'realpath'
-    if test -x /usr/bin/realpath; then
-      :
-    else
-      realpath() {
-        python -c "import os, sys; print os.path.realpath(sys.argv[1]);" "$@"
-      }
-    fi
-  ;;
-  Darwin)
-    realpath() {
-      python -c "import os, sys; print os.path.realpath(sys.argv[1]);" "$@"
-    }
-    stat_d() {
-      stat -f "%d" "$1"
-    }
-  ;;
-esac
+for file in $work/src/etc/profile.d/*.sh; do
+  if test -f "$file"; then
+    . "$file"
+  fi
+done
 
 # any initial path settings here
 
@@ -76,83 +33,6 @@ if test ${PS1+set}; then
     ;;
   esac
 fi
-
-##############################
-#
-# Compute a suitable cache directory for ccache
-#
-##############################
-
-# set any default for $cache
-
-if test "$cache"; then
-  :
-else
-  case "$(uname -s)" in
-    Darwin)
-      cache=${HOME}/Library/Caches
-    ;;
-    Linux)
-      if grep -q docker /proc/self/cgroup; then
-        if test -d "${HOME}/Library/Caches"; then
-          cache=${HOME}/Library/Caches
-        else
-          cache=${XDG_CACHE_HOME-"${HOME}/.cache"}
-        fi
-      else
-        cache=${XDG_CACHE_HOME-"${HOME}/.cache"}
-      fi
-    ;;
-    *)
-      cache=${HOME}/tmp
-    ;;
-  esac
-fi
-
-# See
-# http://git.buildroot.net/buildroot/commit/?id=433290761fceb476b095548eec10adf72405e050
-export CCACHE_DIR=${cache}/ccache
-export BR2_CCACHE_DIR=${cache}/buildroot-ccache
-export BUILDROOT_CACHE_DIR=${cache}/buildroot-ccache
-
-case ":${PATH}:" in
-  *:/usr/lib/ccache:*) ;;
-  *)
-    PATH=/usr/lib/ccache:$PATH
-  ;;
-esac
-
-##############################
-#
-# Compute a (temporary file) runtime directory
-# that persists across multiple logins
-#
-# (Here, slightly violates XDG in that it is not
-# guaranteed to be deleted on logout)
-#
-# Do *not* use $TMPDIR on MacOS, since the path
-# is too long to store UNIX domain sockets of any reasonable length
-#
-# NOTE here that there are some permissions shenanigans
-# going on (likely systemd tmpfile/session management)
-# which causes old files in /tmp to be adopted by root
-#
-##############################
-
-runtime=${XDG_RUNTIME_DIR="/run/user/$(id -u)"}
-if test -d "$runtime"; then
-  :
-else
-  set dummy /tmp/runtime-$(id -u)-*
-  if test -d "$2" -a -w "$2"; then
-    runtime=$2
-  else
-    runtime=$(mktemp -d /tmp/runtime-$(id -u)-XXXXXX)
-  fi
-fi
-
-$work/tools/src/bin/gpg-agent-setup
-eval $($work/tools/src/bin/ssh-agent-setup)
 
 ##############################
 #
