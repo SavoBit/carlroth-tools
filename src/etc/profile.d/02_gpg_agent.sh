@@ -1,8 +1,6 @@
-#!/bin/sh
+##############################
 #
-######################################################################
-#
-# gpg-agent-setup
+# gpg_agent.sh
 #
 # clean up the gpg-agent socket usage
 #
@@ -16,7 +14,7 @@
 #
 ######################################################################
 
-CMD=${0##*/}
+CMD=gpg_agent
 
 sock=$(gpgconf --list-dirs | grep ^agent-socket: | cut -d: -f2)
 socketdir=$(gpgconf --list-dirs | grep ^socketdir: | cut -d: -f2)
@@ -31,33 +29,6 @@ else
   gpgconf --create-socketdir
 fi
 
-gpg_agent_valid()
-{
-  local sock pid
-  sock=$1; shift
-
-  set dummy $(gpg-connect-agent -S "$sock" "getinfo pid" /bye 2>/dev/null)
-  if test "$2" = "D"; then
-    pid=$3
-    if ps -p $pid 1>/dev/null 2>&1; then
-      echo $pid
-      return 0
-    else
-      # reports a PID but it is wrong
-      echo -1
-      return 0
-    fi
-  fi
-
-  set dummy $(gpg-connect-agent -S "$sock" "nop" /bye 2>/dev/null)
-  if test "$2" = "OK"; then
-    echo -1
-    return 0
-  fi
-
-  return 1
-}
-
 sock_local=$socketdir/S.gpg-agent.local
 sock_remote=$socketdir/S.gpg-agent.remote
 
@@ -66,7 +37,7 @@ sock_remote=$socketdir/S.gpg-agent.remote
 if test -S "$sock"; then
   pid=$(gpg_agent_valid $sock)
   if test "$pid"; then
-    echo "$CMD: staging local gpg-agent (pid $pid)" 1>&2
+    loginmsg "$CMD: staging local gpg-agent (pid $pid)"
     rm -f $sock_local
     mv $sock $sock_local
     cp /dev/null $sock
@@ -85,7 +56,7 @@ elif test -S $sock_local; then
     if grep -q $sock_local $sock 2>/dev/null; then
       :
     else
-      echo "$CMD: restoring local gpg-agent (pid $pid)"
+      loginmsg "$CMD: restoring local gpg-agent (pid $pid)"
       cp /dev/null $sock
       chmod 0600 $sock
       echo "%Assuan%" >> $sock
@@ -108,32 +79,42 @@ fi
 
 if test ${SSH_CLIENT+set}; then
   if test -S "$sock_remote"; then
-    echo "$CMD: found a forwarded agent at $sock_remote" 1>&2
+    loginmsg "$CMD: found a forwarded agent at $sock_remote"
     pid=$(gpg_agent_valid $sock_remote)
     if test "$pid"; then
       for client in $SSH_CLIENT; do break; done
       for ck in $(echo $client | cksum); do break ;done
       sock_canon=$socketdir/s.gpg-agent.${ck}
-      echo "$CMD: staging remote gpg-agent (pid $pid, client $client) as $sock_canon" 1>&2
+      loginmsg "$CMD: staging remote gpg-agent (pid $pid, client $client) as $sock_canon"
       rm -f $sock_canon
       mv $sock_remote $sock_canon
       if test -S "$sock"; then
         echo "$CMD: *** default gpg-agent socket is in the way" 1>&2
+      elif ssh_agent_valid "$sock_canon"; then
+        echo "$CMD: *** agent $sock_canon socket is in the way" 1>&2
+        sock_canon=$sock_real
       else
         rm -f "$sock"
-        echo "$CMD: updating default gpg-agent socket" 1>&2
+        loginmsg "$CMD: updating default gpg-agent socket"
         cp /dev/null $sock
         chmod 0600 $sock
         echo "%Assuan%" >> $sock
         echo "socket=$sock_canon" >> $sock
       fi
+      unset client ck sock_canon
     else
       echo "$CMD: *** invalid remote gpg-agent socket $sock_remote" 1>&2
       rm -f $sock_remote
     fi
+    unset pid
   else
     echo "$CMD: *** remote SSH connection did not provide a gpg-agent" 1>&2
   fi
 fi
 
-exit 0
+unset sock socketdir sock_local sock_remote
+unset sock_real
+
+unset CMD
+
+return 0
