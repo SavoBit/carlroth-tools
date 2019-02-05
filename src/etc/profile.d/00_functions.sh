@@ -66,14 +66,14 @@ ssh_agent_valid()
   sleep 3 &
   spid=$!
 
-  ( env SSH_AUTH_SOCK=$sock ssh-add -l 1>/dev/null 2>&1; rv=$?; kill $spid; exit $rv ) &
+  ( env SSH_AUTH_SOCK=$sock ssh-add -l 1>/dev/null 2>&1; rv=$?; kill $spid 2>/dev/null; exit $rv ) &
   cpid=$!
 
   wait %1 2>/dev/null
   sts=$?
   if test $sts -eq 0; then
     kill $cpid 1>/dev/null 2>&1
-    echo "$CMD:FUNCNAME:$sock: *** slow response" 1>&2
+    loginerr "$CMD:FUNCNAME:$sock: *** slow response"
     return 1
   fi
 
@@ -102,7 +102,7 @@ ssh_agent_find()
   # prefer one from the same connecting client
   for sock in $(/bin/ls -1t $sock_pat 2>/dev/null); do
     if ssh_agent_valid $sock; then
-      echo "$CMD:$FUNCNAME: found client agent $sock" 1>&2
+      loginerr "$CMD:$FUNCNAME: found client agent $sock"
       echo $sock
       return 0
     fi
@@ -110,7 +110,7 @@ ssh_agent_find()
 
   for sock in $(/bin/ls -1t ${runtime}/ssh 2>/dev/null); do
     if ssh_agent_valid ${runtime}/ssh/$sock; then
-      echo "$CMD: found non-client agent $sock" 1>&2
+      loginerr "$CMD:$FUNCNAME: found non-client agent $sock"
       echo $sock
       return 0
     fi
@@ -124,24 +124,32 @@ ssh_agent_clean()
   local runtime p tgt
   runtime=$1; shift
 
+  # find all agent sockets with only a single link
+  # (every one we placed here was with a hard link)
+  for p in $(find $runtime/ssh -name 'agent-[0-9]*' -type s -links 1 -print); do
+    loginerr "$CMD:$FUNCNAME: *** socket $p is orphaned"
+    rm $p
+  done
+
   for p in $runtime/ssh/*; do
     test -L "$p" && continue
     if test -S $p; then
       if ssh_agent_valid $p; then
         :
       else
-        echo "$CMD:$FUNCNAME: socket $p is stale" 1>&2
+        loginerr "$CMD:$FUNCNAME: *** socket $p is stale"
         rm $p
       fi
     fi
   done
+
   for p in $runtime/ssh/*; do
     if test -L $p; then
       tgt=$(readlink $p)
       if test -e "$tgt"; then
         :
       else
-        echo "$CMD:$FUNCNAME: symlink $p --> $tgt is stale" 1>&2
+        loginerr "$CMD:$FUNCNAME: *** symlink $p --> $tgt is stale"
         rm $p
       fi
     fi
@@ -186,7 +194,7 @@ gpg_agent_clean()
       if gpg_agent_valid $p 1>/dev/null; then
         :
       else
-        echo "$CMD:$FUNCNAME: socket $p is stale" 1>&2
+        loginerr "$CMD:$FUNCNAME: *** socket $p is stale"
         rm $p
       fi
     fi
@@ -196,7 +204,7 @@ gpg_agent_clean()
     tgt=$(grep socket= $p)
     tgt=${sock#socket=}
     if gpg_agent_valid $sock; then
-      echo "$CMD:$FUNCNAME: lookaside $p --> $tgt is stale" 1>&2
+      loginerr "$CMD:$FUNCNAME: *** lookaside $p --> $tgt is stale"
       rm $p
     fi
   done
@@ -259,6 +267,11 @@ loginmsg()
   return 0
 }
 
+loginerr()
+{
+  echo "$@" 1>&2
+}
+
 ##############################
 #
 # symlink TARGET DEST
@@ -284,7 +297,7 @@ symlink()
       return 0
     fi
   elif test -e $lnk; then
-    echo "$CMD:$FUNCNAME:$lnk: *** not a link" 1>&2
+    loginerr "$CMD:$FUNCNAME:$lnk: *** not a link"
     return 1
   else
     loginmsg "$CMD:$FUNCNAME: agent $tgt --> $lnk"
@@ -313,7 +326,7 @@ gpglink()
   if test -S $dst; then
     if gpg_agent_valid $dst 1>/dev/null; then
       if gpg_agent_valid $sock; then
-        echo "$CMD:$FUNCNAME:$sock: *** in the way" 1>&2
+        loginerr "$CMD:$FUNCNAME:$sock: *** in the way"
 	return 1
       fi
       rm -f $sock
@@ -322,18 +335,18 @@ gpglink()
       # invalid/stale lookaside
       rm -f $dst
     else
-      echo "$CMD:$FUNCNAME:$dst: *** invalid socket" 1>&2
+      loginerr "$CMD:$FUNCNAME:$dst: *** invalid socket"
       return 1
     fi
   elif test -S "$sock"; then
     if gpg_agent_valid $sock 1>/dev/null; then
       :
     else
-      echo "$CMD:$FUNCNAME:$sock: *** invalid socket" 1>&2
+      loginerr "$CMD:$FUNCNAME:$sock: *** invalid socket"
       return 1
     fi
   else
-    echo "$CMD:$FUNCNAME:$sock: *** not a socket" 1>&2
+    loginerr "$CMD:$FUNCNAME:$sock: *** not a socket"
     return 1
   fi
 
