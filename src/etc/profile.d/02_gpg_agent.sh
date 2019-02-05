@@ -46,16 +46,41 @@ if test_ssh_client; then
       loginmsg "$CMD: staging remote gpg-agent (pid $pid, client $client) as $sock_canon"
       rm -f $sock_canon
       mv $sock_remote $sock_canon
+    else
+      loginerr "$CMD: *** invalid forwarded agent $sock_remote"
+      rm -f $sock_remote
     fi
   fi
+
+if test "$SSH_CLIENT" -a -S $sock_canon; then
   gpglink $sock_canon $sock
-elif test "$SSH_CLIENT"; then
-  :
 elif test -S $sock -o -S $sock_local; then
   gpglink $sock_local $sock
+else
+  rm -f $sock
 fi
 
-unset sock socketdir sock_local sock_remote sock_canon
+if test -f $sock; then
+  pid=$(gpg_agent_valid $sock)
+  if test "$pid"; then
+    sock_=$(grep socket= $sock)
+    sock_=${sock_#socket=}
+    export GPG21_AGENT_SOCKET=${sock_}:${pid}:1
+  else
+    loginerr "$CMD: *** invalid agent $sock"
+    rm -f $sock
+  fi
+elif test -S $sock; then
+  pid=$(gpg_agent_valid $sock)
+  if test "$pid"; then
+    export GPG21_AGENT_SOCKET=${sock}:${pid}:1
+  else
+    loginerr "$CMD: *** invalid agent $sock"
+    rm -f $sock
+  fi
+fi
+
+unset sock socketdir sock_local sock_remote sock_canon sock_
 
 unset CMD
 
