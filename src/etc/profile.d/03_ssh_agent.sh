@@ -86,7 +86,7 @@ if test "$sock_real"; then
     sshruntime_fs=$sock_fs
   fi
 
-  if test $sock_fs == $sshruntime_fs; then
+  if test $sock_fs = $sshruntime_fs; then
     if test "$SSH_CONNECTION"; then
       set dummy $SSH_CONNECTION
       for ck in $(echo $2 $3 | cksum); do break; done
