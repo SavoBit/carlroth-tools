@@ -24,7 +24,7 @@ fi
 if test -e "$agent_sock"; then
   agent_pid=$(gpg_agent_valid $agent_sock)
   if test -z "$agent_pid"; then
-    echo "$CMD: *** invald gpg-agent socket $agent_sock" 1>&2
+    loginerr "$CMD: *** invald gpg-agent socket $agent_sock"
   fi
 fi
 
@@ -53,7 +53,7 @@ elif test -S "$agent_ssh_sock"; then
     sock_real=$(realpath $agent_ssh_sock)
   fi
 
-  if test "$agent_pid" -a "$agent_pid" != "-1"; then
+  if test -n "$agent_pid" -a "$agent_pid" != "-1"; then
     SSH_AGENT_PID=$agent_pid
     export SSH_AGENT_PID
   fi
@@ -74,7 +74,12 @@ if test "$sock_real"; then
   # ok to move/link the socket, but keep it on the same filesystem
   # Also avoid $TMPDIR on MacOS because long pathnames
   sshdir=${sock_real%/*}
+  case $sshdir in
+    */gnupg|*/ssh) sshdir=${sshdir%/*} ;;
+  esac
   sock_fs=$(stat_d ${sshdir})
+  set dummy $(/bin/ls -1i $sock_real)
+  sock_ino=$2
 
   runtime_fs=$(stat_d ${SOCKET_RUNTIME_DIR} 2>/dev/null)
 
@@ -86,19 +91,36 @@ if test "$sock_real"; then
     sshruntime_fs=$sock_fs
   fi
 
+  mkdir -p $sshruntime/ssh
+
   if test $sock_fs = $sshruntime_fs; then
-    if test "$SSH_CONNECTION"; then
-      set dummy $SSH_CONNECTION
-      for ck in $(echo $2 $3 | cksum); do break; done
-      sock_canon=${sshruntime}/ssh/agent-${ck}
+
+    # in case source address changed
+    for sock_ in ${sshruntime}/ssh/agent-[0-9]*; do
+      set dummy $(/bin/ls -1i $sock_ 2>/dev/null)
+      if test "$2" = $sock_ino; then
+        sock_canon=$sock_
+        break
+      fi
+    done
+
+    if test "$sock_canon"; then
+      :
     else
-      # local ssh-agent, do not canonicalize
-      sock_canon=$sock_real
+      if test "$SSH_CONNECTION"; then
+        set dummy $SSH_CONNECTION
+        for ck in $(echo $2 $3 | cksum); do break; done
+        sock_canon=${sshruntime}/ssh/agent-${ck}
+      else
+        # local ssh-agent, do not canonicalize
+        sock_canon=$sock_real
+      fi
     fi
+
     if test $sock_real -ef $sock_canon; then
       sock_real=$sock_canon
     elif ssh_agent_valid $sock_canon; then
-      echo "$CMD: *** agent $sock_canon is in the way" 1>&2
+      loginerr "$CMD: *** agent $sock_canon is in the way"
     else
       loginmsg "$CMD: linking agent $sock_real --> $sock_canon"
       mkdir -p ${sshruntime}/ssh
@@ -107,20 +129,23 @@ if test "$sock_real"; then
       sock_real=$sock_canon
       # hard-link, not symlink
     fi
+
   else
-    echo "$CMD: *** ssh agent at $sock_real cannot be moved/linked" 1>&2
+    loginerr "$CMD: *** ssh agent at $sock_real cannot be moved/linked"
   fi
 
   if ssh_agent_valid $sock_real; then
     SSH_AUTH_SOCK=$sock_real
   else
-    echo "$CMD: *** invalid agent $sock_real" 1>&2
+    loginerr "$CMD: *** invalid agent $sock_real"
     sock=$(ssh_agent_find $sshruntime)
     if test "$sock"; then
       SSH_AUTH_SOCK=$sock
     fi
   fi
 
+  unset runtime_fs sshruntime_fs sock_fs sshdir
+  unset sock_ sock_canon sock_ino
 fi
 
 if test_ssh_client; then
@@ -129,6 +154,7 @@ fi
 
 # compute a friendly symlink
 if test -S "$SSH_AUTH_SOCK"; then
+  sock_link=$HOME/.ssh/agent-socket
 
   # detect containers
   cid=$(container-id 2>/dev/null)
