@@ -60,10 +60,24 @@ esac
 
 ssh_agent_valid()
 {
-  local sock sts
+  local sock sts spid cpid rv
   sock=$1; shift
 
-  env SSH_AUTH_SOCK=$sock ssh-add -l 1>/dev/null 2>&1
+  sleep 3 &
+  spid=$!
+
+  ( env SSH_AUTH_SOCK=$sock ssh-add -l 1>/dev/null 2>&1; rv=$?; kill $spid; exit $rv ) &
+  cpid=$!
+
+  wait %1 2>/dev/null
+  sts=$?
+  if test $sts -eq 0; then
+    kill $cpid 1>/dev/null 2>&1
+    echo "$CMD:FUNCNAME:$sock: *** slow response" 1>&2
+    return 1
+  fi
+
+  wait %2 2>/dev/null
   sts=$?
 
   test $sts -eq 0 && return 0
@@ -190,21 +204,19 @@ gpg_agent_clean()
 
 test_loginshell()
 {
-  local buf
-
   buf=$(shopt login_shell 2>&1)
   case "$buf" in
     *on*) return 0 ;;
     *off*) return 1 ;;
   esac
 
-  buf=$(cat /proc/$$/comm 2>&1)
-  case "$buf" in
+  set dummy $(cat /proc/$$/comm 2>&1)
+  case "$2" in
     -*) return 0 ;;
   esac
-  
-  buf=$(ps -p $$ -o comm= 2>&1)
-  case "$buf" in
+
+  set dummy $(ps -p $$ -o comm= 2>&1)
+  case "$2" in
     -*) return 0 ;;
   esac
 
@@ -224,15 +236,16 @@ test_ssh_client()
 
   test "$SSH_CLIENT" || return 1
 
-  ppid=$(ps -p $$ -o ppid=)
+  set dummy $(ps -p $$ -o ppid=)
+  ppid=$2
 
-  buf=$(cat /proc/$ppid/comm 2>&1)
-  case "$buf" in
+  set dummy $(cat /proc/$ppid/comm 2>&1)
+  case "$2" in
     sshd) return 0 ;;
   esac
   
-  buf=$(ps -p $ppid -o comm= 2>&1)
-  case "$buf" in
+  set dummy $(ps -p $ppid -o comm= 2>&1)
+  case "$2" in
     sshd) return 0 ;;
   esac
 
@@ -305,6 +318,9 @@ gpglink()
       fi
       rm -f $sock
       mv $dst $sock
+    elif test -f $dst; then
+      # invalid/stale lookaside
+      rm -f $dst
     else
       echo "$CMD:$FUNCNAME:$dst: *** invalid socket" 1>&2
       return 1
