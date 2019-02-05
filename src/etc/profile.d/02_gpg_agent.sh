@@ -51,7 +51,7 @@ if test_ssh_client; then
   gpglink $sock_canon $sock
 elif test "$SSH_CLIENT"; then
   :
-else
+elif test -S $sock -o -S $sock_local; then
   gpglink $sock_local $sock
 fi
 
