@@ -51,6 +51,7 @@ if test_ssh_client; then
       rm -f $sock_remote
     fi
   fi
+fi
 
 if test "$SSH_CLIENT" -a -S $sock_canon; then
   gpglink $sock_canon $sock
