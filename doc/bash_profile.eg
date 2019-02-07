@@ -23,6 +23,8 @@ for file in $work/src/etc/profile.d/*.sh; do
   fi
 done
 
+unset file
+
 # any initial path settings here
 
 if test ${PS1+set}; then
