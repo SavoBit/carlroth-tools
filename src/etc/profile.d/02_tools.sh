@@ -9,7 +9,7 @@ sourcedir=${source%/*}
 bindir=$(cd $sourcedir && cd ../../bin && pwd)
 addpath PATH $bindir
 
-prependpath $HOME/bin
+prependpath PATH $HOME/bin
 
 unset source sourcedir bindir
 return 0
