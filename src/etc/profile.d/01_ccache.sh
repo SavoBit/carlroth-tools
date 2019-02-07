@@ -43,4 +43,6 @@ fi
 export CCACHE_DIR=${CACHE_HOME}/ccache
 export BR2_CCACHE_DIR=${CACHE_HOME}/buildroot-ccache
 export BUILDROOT_CACHE_DIR=${CACHE_HOME}/buildroot-ccache
-prependpath PATH /usr/lib/ccache
+if test -d /usr/lib/ccache; then
+  prependpath PATH /usr/lib/ccache
+fi
